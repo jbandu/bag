@@ -10,9 +10,37 @@ from datetime import datetime
 from loguru import logger
 import sys
 
-from orchestrator.baggage_orchestrator import orchestrator
-from utils.database import redis_cache
 from config.settings import settings
+
+# Lazy imports for orchestrator and redis (only load when needed)
+orchestrator = None
+redis_cache = None
+
+def get_orchestrator():
+    """Lazy load orchestrator only when needed"""
+    global orchestrator
+    if orchestrator is None:
+        try:
+            from orchestrator.baggage_orchestrator import orchestrator as orch
+            orchestrator = orch
+            logger.info("✅ Orchestrator loaded successfully")
+        except Exception as e:
+            logger.error(f"❌ Failed to load orchestrator: {e}")
+            raise HTTPException(status_code=503, detail="AI processing unavailable - orchestrator failed to load")
+    return orchestrator
+
+def get_redis():
+    """Lazy load redis only when needed"""
+    global redis_cache
+    if redis_cache is None:
+        try:
+            from utils.database import redis_cache as rc
+            redis_cache = rc
+            logger.info("✅ Redis cache loaded successfully")
+        except Exception as e:
+            logger.warning(f"⚠️ Redis cache unavailable: {e}")
+            redis_cache = None
+    return redis_cache
 
 
 # Configure logging
@@ -126,7 +154,9 @@ async def health_check():
 @app.get("/metrics")
 async def get_metrics():
     """Get operational metrics"""
-    if redis_cache is None:
+    cache = get_redis()
+
+    if cache is None:
         return {
             "status": "metrics_unavailable",
             "reason": "Redis not connected",
@@ -134,14 +164,14 @@ async def get_metrics():
         }
 
     return {
-        "bags_processed": redis_cache.get_metric('bags_processed'),
-        "scans_processed": redis_cache.get_metric('scans_processed'),
-        "risk_assessments_performed": redis_cache.get_metric('risk_assessments_performed'),
-        "high_risk_bags_detected": redis_cache.get_metric('high_risk_bags_detected'),
-        "exceptions_handled": redis_cache.get_metric('exceptions_handled'),
-        "scan_anomalies": redis_cache.get_metric('scan_anomalies'),
-        "pirs_created": redis_cache.get_metric('pirs_created'),
-        "couriers_dispatched": redis_cache.get_metric('couriers_dispatched'),
+        "bags_processed": cache.get_metric('bags_processed'),
+        "scans_processed": cache.get_metric('scans_processed'),
+        "risk_assessments_performed": cache.get_metric('risk_assessments_performed'),
+        "high_risk_bags_detected": cache.get_metric('high_risk_bags_detected'),
+        "exceptions_handled": cache.get_metric('exceptions_handled'),
+        "scan_anomalies": cache.get_metric('scan_anomalies'),
+        "pirs_created": cache.get_metric('pirs_created'),
+        "couriers_dispatched": cache.get_metric('couriers_dispatched'),
         "timestamp": datetime.utcnow().isoformat()
     }
 
@@ -163,10 +193,13 @@ async def process_scan_event(
     """
     try:
         logger.info(f"Received scan event from {request.source}")
-        
+
+        # Lazy load orchestrator when needed
+        orch = get_orchestrator()
+
         # Process asynchronously in background
-        result = await orchestrator.process_baggage_event(request.raw_scan)
-        
+        result = await orch.process_baggage_event(request.raw_scan)
+
         return {
             "status": "success",
             "message": "Scan event processed",
@@ -194,10 +227,13 @@ async def process_type_b_message(
     """
     try:
         logger.info(f"Received Type B {request.message_type} from {request.from_station}")
-        
+
+        # Lazy load orchestrator when needed
+        orch = get_orchestrator()
+
         # Process as scan event
-        result = await orchestrator.process_baggage_event(request.message)
-        
+        result = await orch.process_baggage_event(request.message)
+
         return {
             "status": "success",
             "message": f"Type B {request.message_type} processed",
@@ -243,20 +279,38 @@ async def get_bag_status(bag_tag: str):
     Get current status of a bag
     """
     try:
-        # Check cache first
-        cached_status = redis_cache.get_bag_status(bag_tag)
-        
+        # Check cache first (if Redis is available)
+        cache = get_redis()
+        cached_status = None
+
+        if cache is not None:
+            cached_status = cache.get_bag_status(bag_tag)
+
         if cached_status:
             return {
                 "bag_tag": bag_tag,
                 "status": cached_status,
                 "source": "cache"
             }
-        
-        # Otherwise query database
-        from utils.database import supabase_db
-        bag_data = supabase_db.get_bag_data(bag_tag)
-        
+
+        # Otherwise query database (use Neon PostgreSQL)
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+
+        neon_url = settings.neon_database_url if hasattr(settings, 'neon_database_url') else None
+
+        if not neon_url:
+            raise HTTPException(status_code=503, detail="Database not configured")
+
+        conn = psycopg2.connect(neon_url)
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        cursor.execute("SELECT * FROM baggage WHERE bag_tag = %s", (bag_tag,))
+        bag_data = cursor.fetchone()
+
+        cursor.close()
+        conn.close()
+
         if not bag_data:
             raise HTTPException(status_code=404, detail=f"Bag {bag_tag} not found")
         

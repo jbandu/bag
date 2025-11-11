@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     neo4j_user: str = "neo4j"
     neo4j_password: str = "password"
 
+    # PostgreSQL (Neon) - Primary database for Railway
+    neon_database_url: Optional[str] = None
+
     supabase_url: str = "https://placeholder.supabase.co"
     supabase_key: str = "placeholder-key"
     supabase_service_key: str = "placeholder-service-key"
@@ -67,4 +70,10 @@ class Settings(BaseSettings):
 
 
 # Global settings instance
-settings = Settings(_env_file=".env", _env_file_encoding="utf-8")
+# In production (Railway), environment variables are set directly
+# In development, load from .env file if it exists
+import os
+if os.path.exists(".env"):
+    settings = Settings(_env_file=".env", _env_file_encoding="utf-8")
+else:
+    settings = Settings()  # Load from environment variables only
