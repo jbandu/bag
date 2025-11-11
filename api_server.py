@@ -22,12 +22,15 @@ logger.add(
     format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan> - <level>{message}</level>",
     level=settings.log_level
 )
-logger.add(
-    "logs/baggage_api_{time:YYYY-MM-DD}.log",
-    rotation="1 day",
-    retention="30 days",
-    level="INFO"
-)
+
+# Only log to file in development (Railway uses stdout)
+if settings.environment == "development":
+    logger.add(
+        "logs/baggage_api_{time:YYYY-MM-DD}.log",
+        rotation="1 day",
+        retention="30 days",
+        level="INFO"
+    )
 
 
 # FastAPI app
