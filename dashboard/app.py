@@ -1,6 +1,12 @@
 """
 Streamlit Dashboard for Baggage Operations Monitoring
 """
+import sys
+import os
+
+# Add parent directory to path so imports work
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import streamlit as st
 import asyncio
 from datetime import datetime, timedelta
