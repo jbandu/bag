@@ -1,0 +1,18 @@
+# Minimal dependencies for Vercel serverless deployment
+# Only CRUD operations, no AI/ML processing
+
+# Web Framework
+fastapi==0.115.4
+uvicorn[standard]==0.32.0
+pydantic==2.9.2
+pydantic-settings==2.6.0
+
+# Database - PostgreSQL only
+psycopg2-binary==2.9.9
+
+# Essentials
+python-dotenv==1.0.1
+httpx==0.27.2
+
+# Lightweight logging
+python-dateutil==2.9.0
