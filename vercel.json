@@ -2,17 +2,18 @@
   "version": 2,
   "builds": [
     {
-      "src": "api/vercel_app.py",
+      "src": "api/test_minimal.py",
       "use": "@vercel/python",
       "config": {
-        "maxLambdaSize": "50mb"
+        "maxLambdaSize": "15mb",
+        "pythonRequirements": "api/requirements-minimal.txt"
       }
     }
   ],
   "routes": [
     {
       "src": "/(.*)",
-      "dest": "api/vercel_app.py"
+      "dest": "api/test_minimal.py"
     }
   ]
 }
