@@ -7,17 +7,19 @@ from typing import Optional
 
 class Settings(BaseSettings):
     """Application settings from environment variables"""
-    
+
+    model_config = {"extra": "ignore", "protected_namespaces": ("settings_",)}
+
     # AI Model Configuration
     anthropic_api_key: str
     model_name: str = "claude-sonnet-4-20250514"
     model_temperature: float = 0.1
-    
+
     # Database Configuration
     neo4j_uri: str
     neo4j_user: str
     neo4j_password: str
-    
+
     supabase_url: str
     supabase_key: str
     supabase_service_key: str
@@ -62,11 +64,7 @@ class Settings(BaseSettings):
     mct_buffer_minutes: int = 15
     scan_gap_warning_minutes: int = 30
     montreal_convention_max_usd: float = 1500.0
-    
-    class Config:
-        env_file = ".env"
-        case_sensitive = False
 
 
 # Global settings instance
-settings = Settings()
+settings = Settings(_env_file=".env", _env_file_encoding="utf-8")
