@@ -74,6 +74,39 @@ class BaggageXMLRequest(BaseModel):
     timestamp: Optional[str] = None
 
 
+# Root endpoint
+@app.get("/")
+async def root():
+    """API Welcome and Documentation"""
+    return {
+        "service": "Baggage Operations Intelligence Platform",
+        "version": "1.0.0",
+        "description": "AI-Powered Baggage Intelligence with 8 Specialized Agents",
+        "status": "operational",
+        "endpoints": {
+            "health": "/health",
+            "metrics": "/metrics",
+            "api_docs": "/docs",
+            "redoc": "/redoc",
+            "process_scan": "POST /api/v1/scan",
+            "process_type_b": "POST /api/v1/type-b",
+            "process_xml": "POST /api/v1/baggage-xml",
+            "get_bag_status": "GET /api/v1/bag/{bag_tag}"
+        },
+        "agents": [
+            "Scan Event Processor",
+            "Risk Scoring Engine",
+            "WorldTracer Integration",
+            "SITA Message Handler",
+            "BaggageXML Handler",
+            "Exception Case Manager",
+            "Courier Dispatch Agent",
+            "Passenger Communication"
+        ],
+        "powered_by": "Claude Sonnet 4 + LangGraph"
+    }
+
+
 # Health check
 @app.get("/health")
 async def health_check():
