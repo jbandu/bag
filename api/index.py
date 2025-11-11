@@ -1,34 +1,19 @@
-"""
-Vercel Serverless Function Entry Point
-This wraps the FastAPI app for Vercel deployment
-"""
-import sys
-import os
+"""Ultra-minimal FastAPI test for Vercel"""
+from fastapi import FastAPI
+from datetime import datetime
 
-# Add parent directory to path so imports work
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+app = FastAPI(title="Minimal Test")
 
-try:
-    # Import the FastAPI app
-    from api_server import app
-    handler = app
-except Exception as e:
-    # Fallback minimal app if imports fail
-    from fastapi import FastAPI
+@app.get("/")
+async def root():
+    return {
+        "status": "working",
+        "timestamp": datetime.utcnow().isoformat(),
+        "message": "Ultra-minimal FastAPI on Vercel"
+    }
 
-    handler = FastAPI()
+@app.get("/health")
+async def health():
+    return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
 
-    @handler.get("/")
-    def root():
-        return {
-            "status": "error",
-            "message": f"Failed to load full application: {str(e)}",
-            "hint": "Check environment variables and dependencies"
-        }
-
-    @handler.get("/health")
-    def health():
-        return {
-            "status": "degraded",
-            "error": str(e)
-        }
+handler = app
