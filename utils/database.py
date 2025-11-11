@@ -197,7 +197,21 @@ class RedisCache:
         return int(value) if value else 0
 
 
-# Global instances
-neo4j_db = Neo4jConnection()
-supabase_db = SupabaseConnection()
-redis_cache = RedisCache()
+# Global instances with graceful fallback
+try:
+    neo4j_db = Neo4jConnection()
+except Exception as e:
+    logger.warning(f"Neo4j connection failed (will use limited functionality): {e}")
+    neo4j_db = None
+
+try:
+    supabase_db = SupabaseConnection()
+except Exception as e:
+    logger.warning(f"Supabase connection failed (will use limited functionality): {e}")
+    supabase_db = None
+
+try:
+    redis_cache = RedisCache()
+except Exception as e:
+    logger.warning(f"Redis connection failed (will use in-memory cache): {e}")
+    redis_cache = None

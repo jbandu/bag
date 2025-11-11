@@ -90,6 +90,13 @@ async def health_check():
 @app.get("/metrics")
 async def get_metrics():
     """Get operational metrics"""
+    if redis_cache is None:
+        return {
+            "status": "metrics_unavailable",
+            "reason": "Redis not connected",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
     return {
         "bags_processed": redis_cache.get_metric('bags_processed'),
         "scans_processed": redis_cache.get_metric('scans_processed'),

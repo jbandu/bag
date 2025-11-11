@@ -11,18 +11,5 @@
       "src": "/(.*)",
       "dest": "api/index.py"
     }
-  ],
-  "env": {
-    "ANTHROPIC_API_KEY": "@anthropic_api_key",
-    "NEO4J_URI": "@neo4j_uri",
-    "NEO4J_USER": "@neo4j_user",
-    "NEO4J_PASSWORD": "@neo4j_password",
-    "SUPABASE_URL": "@supabase_url",
-    "SUPABASE_KEY": "@supabase_key",
-    "SUPABASE_SERVICE_KEY": "@supabase_service_key",
-    "REDIS_URL": "@redis_url",
-    "WORLDTRACER_API_URL": "@worldtracer_api_url",
-    "WORLDTRACER_API_KEY": "@worldtracer_api_key",
-    "SITA_TYPE_B_ENDPOINT": "@sita_type_b_endpoint"
-  }
+  ]
 }

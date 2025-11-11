@@ -15,24 +15,24 @@ class Settings(BaseSettings):
     model_name: str = "claude-sonnet-4-20250514"
     model_temperature: float = 0.1
 
-    # Database Configuration
-    neo4j_uri: str
-    neo4j_user: str
-    neo4j_password: str
+    # Database Configuration (Optional for initial deployment)
+    neo4j_uri: str = "bolt://localhost:7687"
+    neo4j_user: str = "neo4j"
+    neo4j_password: str = "password"
 
-    supabase_url: str
-    supabase_key: str
-    supabase_service_key: str
-    
+    supabase_url: str = "https://placeholder.supabase.co"
+    supabase_key: str = "placeholder-key"
+    supabase_service_key: str = "placeholder-service-key"
+
     redis_url: str = "redis://localhost:6379"
-    
-    # WorldTracer Integration
-    worldtracer_api_url: str
-    worldtracer_api_key: str
+
+    # WorldTracer Integration (Optional)
+    worldtracer_api_url: str = "https://worldtracer-api.example.com"
+    worldtracer_api_key: str = "placeholder-key"
     worldtracer_airline_code: str = "CM"
-    
-    # SITA Messaging
-    sita_type_b_endpoint: str
+
+    # SITA Messaging (Optional)
+    sita_type_b_endpoint: str = "https://sita-gateway.example.com"
     sita_airline_code: str = "CMXH"
     
     # Communication Services

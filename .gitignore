@@ -63,3 +63,4 @@ redis_data/
 
 # Local development
 nohup.out
+.vercel
