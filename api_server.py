@@ -2,11 +2,11 @@
 FastAPI Server for Baggage Operations Platform
 Receives scan events from BRS, BHS, DCS, and Type B messages
 """
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Optional, Dict, Any
-from datetime import datetime
+from pydantic import BaseModel, Field
+from typing import Optional, Dict, Any, List
+from datetime import datetime, date
 from loguru import logger
 import sys
 
@@ -64,8 +64,8 @@ if settings.environment == "development":
 # FastAPI app
 app = FastAPI(
     title="Baggage Operations API",
-    description="AI-Powered Baggage Intelligence Platform",
-    version="1.0.0",
+    description="AI-Powered Baggage Intelligence Platform with Advanced Filtering & Batch Operations",
+    version="1.1.0",
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -105,13 +105,53 @@ class BaggageXMLRequest(BaseModel):
     timestamp: Optional[str] = None
 
 
+class PaginationParams(BaseModel):
+    """Pagination parameters"""
+    limit: int = Field(default=100, ge=1, le=1000, description="Maximum number of results")
+    offset: int = Field(default=0, ge=0, description="Number of results to skip")
+
+
+class BagFilterParams(BaseModel):
+    """Advanced filtering for bags"""
+    status: Optional[str] = Field(None, description="Filter by bag status")
+    risk_min: Optional[float] = Field(None, ge=0.0, le=1.0, description="Minimum risk score")
+    risk_max: Optional[float] = Field(None, ge=0.0, le=1.0, description="Maximum risk score")
+    location: Optional[str] = Field(None, description="Filter by current location (airport code)")
+    airline: Optional[str] = Field(None, description="Filter by airline code")
+    date_from: Optional[str] = Field(None, description="Start date (YYYY-MM-DD)")
+    date_to: Optional[str] = Field(None, description="End date (YYYY-MM-DD)")
+    passenger_name: Optional[str] = Field(None, description="Filter by passenger name (partial match)")
+    pnr: Optional[str] = Field(None, description="Filter by PNR")
+
+
+class ScanFilterParams(BaseModel):
+    """Advanced filtering for scan events"""
+    bag_tag: Optional[str] = Field(None, description="Filter by bag tag")
+    location: Optional[str] = Field(None, description="Filter by scan location")
+    scan_type: Optional[str] = Field(None, description="Filter by scan type")
+    date_from: Optional[str] = Field(None, description="Start date (YYYY-MM-DD)")
+    date_to: Optional[str] = Field(None, description="End date (YYYY-MM-DD)")
+    status: Optional[str] = Field(None, description="Filter by status")
+
+
+class BatchScanRequest(BaseModel):
+    """Batch scan processing"""
+    scans: List[Dict[str, Any]] = Field(..., description="List of scan events to process")
+    source: str = Field(default="BATCH", description="Source system identifier")
+
+
+class BatchBagQuery(BaseModel):
+    """Batch bag status query"""
+    bag_tags: List[str] = Field(..., description="List of bag tags to query", min_items=1, max_items=100)
+
+
 # Root endpoint
 @app.get("/")
 async def root():
     """API Welcome and Documentation"""
     return {
         "service": "Baggage Operations Intelligence Platform",
-        "version": "1.0.0",
+        "version": "1.1.0",
         "description": "AI-Powered Baggage Intelligence with 8 Specialized Agents",
         "status": "operational",
         "endpoints": {
@@ -122,7 +162,17 @@ async def root():
             "process_scan": "POST /api/v1/scan",
             "process_type_b": "POST /api/v1/type-b",
             "process_xml": "POST /api/v1/baggage-xml",
-            "get_bag_status": "GET /api/v1/bag/{bag_tag}"
+            "get_bag_status": "GET /api/v1/bag/{bag_tag}",
+            "list_bags": "GET /api/v1/bags (with pagination & filtering)",
+            "list_scans": "GET /api/v1/scans (with pagination & filtering)",
+            "batch_query_bags": "POST /api/v1/bags/batch",
+            "batch_process_scans": "POST /api/v1/scans/batch",
+            "dashboard_stats": "GET /api/v1/dashboard/stats"
+        },
+        "features": {
+            "pagination": "All list endpoints support limit/offset pagination",
+            "filtering": "Advanced filtering by status, risk, location, date range, etc.",
+            "batch_operations": "Process up to 100 bags/scans in a single request"
         },
         "agents": [
             "Scan Event Processor",
@@ -328,9 +378,39 @@ async def get_bag_status(bag_tag: str):
 
 
 @app.get("/api/v1/bags")
-async def list_bags(risk_threshold: float = None, status: str = None, limit: int = 100):
+async def list_bags(
+    limit: int = Query(100, ge=1, le=1000, description="Maximum number of results"),
+    offset: int = Query(0, ge=0, description="Number of results to skip"),
+    status: Optional[str] = Query(None, description="Filter by bag status"),
+    risk_min: Optional[float] = Query(None, ge=0.0, le=1.0, description="Minimum risk score"),
+    risk_max: Optional[float] = Query(None, ge=0.0, le=1.0, description="Maximum risk score"),
+    location: Optional[str] = Query(None, description="Filter by current location"),
+    airline: Optional[str] = Query(None, description="Filter by airline code"),
+    date_from: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
+    date_to: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
+    passenger_name: Optional[str] = Query(None, description="Filter by passenger name"),
+    pnr: Optional[str] = Query(None, description="Filter by PNR")
+):
     """
-    List all bags with optional filtering
+    List bags with advanced filtering and pagination
+
+    **Pagination:**
+    - `limit`: Maximum number of results (1-1000, default: 100)
+    - `offset`: Number of results to skip (for pagination)
+
+    **Filters:**
+    - `status`: Bag status (checked_in, in_transit, loaded, etc.)
+    - `risk_min`, `risk_max`: Risk score range (0.0-1.0)
+    - `location`: Current location (airport code)
+    - `airline`: Airline code
+    - `date_from`, `date_to`: Date range (YYYY-MM-DD)
+    - `passenger_name`: Partial name match
+    - `pnr`: Booking reference
+
+    **Example:**
+    ```
+    /api/v1/bags?limit=50&offset=0&risk_min=0.7&location=PTY
+    ```
     """
     try:
         import psycopg2
@@ -348,16 +428,50 @@ async def list_bags(risk_threshold: float = None, status: str = None, limit: int
         query = "SELECT * FROM baggage WHERE 1=1"
         params = []
 
-        if risk_threshold is not None:
-            query += " AND risk_score >= %s"
-            params.append(risk_threshold)
-
         if status:
             query += " AND status = %s"
             params.append(status)
 
-        query += " ORDER BY risk_score DESC, created_at DESC LIMIT %s"
-        params.append(limit)
+        if risk_min is not None:
+            query += " AND risk_score >= %s"
+            params.append(risk_min)
+
+        if risk_max is not None:
+            query += " AND risk_score <= %s"
+            params.append(risk_max)
+
+        if location:
+            query += " AND current_location = %s"
+            params.append(location)
+
+        if airline:
+            query += " AND bag_tag LIKE %s"
+            params.append(f"{airline}%")
+
+        if date_from:
+            query += " AND created_at >= %s"
+            params.append(date_from)
+
+        if date_to:
+            query += " AND created_at <= %s"
+            params.append(f"{date_to} 23:59:59")
+
+        if passenger_name:
+            query += " AND passenger_name ILIKE %s"
+            params.append(f"%{passenger_name}%")
+
+        if pnr:
+            query += " AND pnr = %s"
+            params.append(pnr)
+
+        # Get total count for pagination metadata
+        count_query = query.replace("SELECT *", "SELECT COUNT(*)")
+        cursor.execute(count_query, params)
+        total_count = cursor.fetchone()['count']
+
+        # Add ordering and pagination
+        query += " ORDER BY risk_score DESC, created_at DESC LIMIT %s OFFSET %s"
+        params.extend([limit, offset])
 
         cursor.execute(query, params)
         bags = cursor.fetchall()
@@ -366,7 +480,11 @@ async def list_bags(risk_threshold: float = None, status: str = None, limit: int
         conn.close()
 
         return {
+            "total": total_count,
             "count": len(bags),
+            "limit": limit,
+            "offset": offset,
+            "has_more": (offset + len(bags)) < total_count,
             "bags": bags
         }
 
@@ -374,6 +492,226 @@ async def list_bags(risk_threshold: float = None, status: str = None, limit: int
         raise
     except Exception as e:
         logger.error(f"Error listing bags: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/scans")
+async def list_scans(
+    limit: int = Query(100, ge=1, le=1000, description="Maximum number of results"),
+    offset: int = Query(0, ge=0, description="Number of results to skip"),
+    bag_tag: Optional[str] = Query(None, description="Filter by bag tag"),
+    location: Optional[str] = Query(None, description="Filter by scan location"),
+    scan_type: Optional[str] = Query(None, description="Filter by scan type"),
+    date_from: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
+    date_to: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
+    status: Optional[str] = Query(None, description="Filter by status")
+):
+    """
+    List scan events with advanced filtering and pagination
+
+    **Pagination:**
+    - `limit`: Maximum number of results (1-1000, default: 100)
+    - `offset`: Number of results to skip
+
+    **Filters:**
+    - `bag_tag`: Specific bag tag
+    - `location`: Scan location (airport/station code)
+    - `scan_type`: Type of scan (check-in, sortation, load, etc.)
+    - `date_from`, `date_to`: Date range
+    - `status`: Scan status
+
+    **Example:**
+    ```
+    /api/v1/scans?bag_tag=CM123456&limit=50
+    ```
+    """
+    try:
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+
+        neon_url = settings.neon_database_url if hasattr(settings, 'neon_database_url') else None
+
+        if not neon_url:
+            raise HTTPException(status_code=503, detail="Database not configured")
+
+        conn = psycopg2.connect(neon_url)
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Build query with filters
+        query = "SELECT * FROM scan_events WHERE 1=1"
+        params = []
+
+        if bag_tag:
+            query += " AND bag_tag = %s"
+            params.append(bag_tag)
+
+        if location:
+            query += " AND location = %s"
+            params.append(location)
+
+        if scan_type:
+            query += " AND scan_type = %s"
+            params.append(scan_type)
+
+        if date_from:
+            query += " AND timestamp >= %s"
+            params.append(date_from)
+
+        if date_to:
+            query += " AND timestamp <= %s"
+            params.append(f"{date_to} 23:59:59")
+
+        if status:
+            query += " AND status = %s"
+            params.append(status)
+
+        # Get total count
+        count_query = query.replace("SELECT *", "SELECT COUNT(*)")
+        cursor.execute(count_query, params)
+        total_count = cursor.fetchone()['count']
+
+        # Add ordering and pagination
+        query += " ORDER BY timestamp DESC LIMIT %s OFFSET %s"
+        params.extend([limit, offset])
+
+        cursor.execute(query, params)
+        scans = cursor.fetchall()
+
+        cursor.close()
+        conn.close()
+
+        return {
+            "total": total_count,
+            "count": len(scans),
+            "limit": limit,
+            "offset": offset,
+            "has_more": (offset + len(scans)) < total_count,
+            "scans": scans
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error listing scans: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/bags/batch")
+async def batch_query_bags(request: BatchBagQuery):
+    """
+    Query status of multiple bags in a single request
+
+    **Request Body:**
+    ```json
+    {
+      "bag_tags": ["CM123456", "CM789012", "CM345678"]
+    }
+    ```
+
+    **Response:** Returns status for all requested bags (up to 100 at once)
+    """
+    try:
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+
+        neon_url = settings.neon_database_url if hasattr(settings, 'neon_database_url') else None
+
+        if not neon_url:
+            raise HTTPException(status_code=503, detail="Database not configured")
+
+        conn = psycopg2.connect(neon_url)
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Query all bags in one go
+        placeholders = ', '.join(['%s'] * len(request.bag_tags))
+        query = f"SELECT * FROM baggage WHERE bag_tag IN ({placeholders})"
+
+        cursor.execute(query, request.bag_tags)
+        bags = cursor.fetchall()
+
+        cursor.close()
+        conn.close()
+
+        # Create a map for quick lookup
+        bag_map = {bag['bag_tag']: bag for bag in bags}
+
+        # Return results in same order as requested, with null for not found
+        results = []
+        for tag in request.bag_tags:
+            results.append({
+                "bag_tag": tag,
+                "found": tag in bag_map,
+                "data": bag_map.get(tag)
+            })
+
+        return {
+            "total_requested": len(request.bag_tags),
+            "total_found": len(bags),
+            "results": results
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in batch query: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/scans/batch")
+async def batch_process_scans(request: BatchScanRequest, background_tasks: BackgroundTasks):
+    """
+    Process multiple scan events in a single request
+
+    **Request Body:**
+    ```json
+    {
+      "source": "BHS",
+      "scans": [
+        {"raw_scan": "Bag Tag: CM123456...", "metadata": {}},
+        {"raw_scan": "Bag Tag: CM789012...", "metadata": {}}
+      ]
+    }
+    ```
+
+    **Response:** Returns processing status for each scan
+    """
+    try:
+        logger.info(f"Received batch of {len(request.scans)} scans from {request.source}")
+
+        orch = get_orchestrator()
+
+        results = []
+        for idx, scan_data in enumerate(request.scans):
+            try:
+                raw_scan = scan_data.get('raw_scan', '')
+                result = await orch.process_baggage_event(raw_scan)
+                results.append({
+                    "index": idx,
+                    "status": "success",
+                    "result": result
+                })
+            except Exception as e:
+                logger.error(f"Error processing scan {idx}: {str(e)}")
+                results.append({
+                    "index": idx,
+                    "status": "error",
+                    "error": str(e)
+                })
+
+        success_count = sum(1 for r in results if r['status'] == 'success')
+        error_count = len(results) - success_count
+
+        return {
+            "status": "completed",
+            "total_scans": len(request.scans),
+            "successful": success_count,
+            "failed": error_count,
+            "results": results,
+            "received_at": datetime.utcnow().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Error in batch processing: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
