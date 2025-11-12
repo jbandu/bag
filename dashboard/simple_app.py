@@ -59,49 +59,137 @@ with st.sidebar:
 if page == "📊 Dashboard Overview":
     st.header("Dashboard Overview")
 
-    col1, col2, col3, col4 = st.columns(4)
+    # Fetch real-time stats from API
+    try:
+        response = requests.get(f"{API_URL}/api/v1/dashboard/stats", timeout=5)
+        if response.status_code == 200:
+            stats = response.json()
 
-    with col1:
-        st.metric("Total Bags Tracked", "1,234", "+52")
-    with col2:
-        st.metric("Active Scans", "89", "+12")
-    with col3:
-        st.metric("High Risk Alerts", "3", "-1")
-    with col4:
-        st.metric("System Health", "98%", "+2%")
+            col1, col2, col3, col4 = st.columns(4)
 
-    st.markdown("---")
+            with col1:
+                st.metric("Total Bags Tracked", stats.get('total_bags', 0))
+            with col2:
+                st.metric("Total Scans", stats.get('total_scans', 0))
+            with col3:
+                st.metric("High Risk Alerts", stats.get('high_risk_count', 0))
+            with col4:
+                medium_risk = stats.get('medium_risk_count', 0)
+                st.metric("Medium Risk", medium_risk)
 
-    # Sample chart
-    st.subheader("📈 Bag Processing Over Time")
-    sample_data = pd.DataFrame({
-        'Hour': list(range(24)),
-        'Bags Processed': [45, 38, 52, 61, 73, 68, 55, 49, 67, 82, 91, 88,
-                          95, 103, 98, 105, 112, 108, 95, 87, 76, 68, 59, 51]
-    })
-    fig = px.line(sample_data, x='Hour', y='Bags Processed',
-                  title='Bags Processed by Hour (Last 24h)')
-    st.plotly_chart(fig, use_container_width=True)
+            st.markdown("---")
+
+            # Risk Distribution Chart
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.subheader("📊 Risk Distribution")
+                risk_data = pd.DataFrame({
+                    'Risk Level': ['Low Risk', 'Medium Risk', 'High Risk'],
+                    'Count': [
+                        stats.get('low_risk_count', 0),
+                        stats.get('medium_risk_count', 0),
+                        stats.get('high_risk_count', 0)
+                    ]
+                })
+                fig = px.pie(risk_data, values='Count', names='Risk Level',
+                            color='Risk Level',
+                            color_discrete_map={
+                                'Low Risk': '#00CC66',
+                                'Medium Risk': '#FFB84D',
+                                'High Risk': '#FF4444'
+                            })
+                st.plotly_chart(fig, use_container_width=True)
+
+            with col2:
+                st.subheader("📈 Status Breakdown")
+                status_breakdown = stats.get('status_breakdown', {})
+                if status_breakdown:
+                    status_df = pd.DataFrame([
+                        {'Status': k, 'Count': v}
+                        for k, v in status_breakdown.items()
+                    ])
+                    fig = px.bar(status_df, x='Status', y='Count',
+                                color='Count',
+                                color_continuous_scale='Viridis')
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("No status data available")
+
+            # High-Risk Bags Alert Table
+            st.markdown("---")
+            st.subheader("🔴 High-Risk Bags Requiring Attention")
+            high_risk_bags = stats.get('high_risk_bags', [])
+            if high_risk_bags:
+                df = pd.DataFrame(high_risk_bags)
+                # Format risk_score as percentage
+                df['risk_score'] = df['risk_score'].apply(lambda x: f"{float(x)*100:.0f}%")
+                st.dataframe(
+                    df,
+                    use_container_width=True,
+                    hide_index=True
+                )
+            else:
+                st.success("✅ No high-risk bags at this time!")
+
+        else:
+            st.error(f"Failed to fetch stats: API returned {response.status_code}")
+            # Fallback to static data
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Total Bags Tracked", "N/A")
+            with col2:
+                st.metric("Active Scans", "N/A")
+            with col3:
+                st.metric("High Risk Alerts", "N/A")
+            with col4:
+                st.metric("System Health", "N/A")
+
+    except Exception as e:
+        st.error(f"❌ Failed to connect to API: {str(e)}")
+        st.info("Please check that the API is running and the API_URL is correct")
 
 elif page == "🔍 Bag Lookup":
     st.header("Bag Lookup")
 
+    # Sample bag tags for quick access
+    st.markdown("**Quick Test:** Try searching for: `CM12345`, `CM67890`, `CM11111`, `CM99999`")
+
     bag_tag = st.text_input("Enter Bag Tag", placeholder="e.g., CM12345")
 
-    if st.button("Search"):
+    if st.button("Search") or bag_tag:
         if bag_tag:
             with st.spinner(f"Searching for {bag_tag}..."):
                 try:
                     response = requests.get(f"{API_URL}/api/v1/bag/{bag_tag}", timeout=5)
                     if response.status_code == 200:
                         data = response.json()
-                        st.success(f"Found bag: {bag_tag}")
+                        bag_info = data.get('status', {})
 
-                        col1, col2 = st.columns(2)
+                        # Display bag header with risk indicator
+                        risk_score = float(bag_info.get('risk_score', 0))
+                        risk_emoji = "🟢" if risk_score < 0.3 else "🟡" if risk_score < 0.7 else "🔴"
+                        st.success(f"{risk_emoji} Found bag: {bag_tag} - Risk: {risk_score*100:.0f}%")
+
+                        # Display bag details in columns
+                        col1, col2, col3 = st.columns(3)
+
                         with col1:
-                            st.json(data)
+                            st.metric("Passenger", bag_info.get('passenger_name', 'N/A'))
+                            st.metric("PNR", bag_info.get('pnr', 'N/A'))
+
                         with col2:
-                            st.info("Bag details retrieved from API")
+                            st.metric("Status", bag_info.get('status', 'N/A'))
+                            st.metric("Current Location", bag_info.get('current_location', 'N/A'))
+
+                        with col3:
+                            st.metric("Risk Score", f"{risk_score*100:.0f}%")
+                            st.metric("Routing", bag_info.get('routing', 'N/A'))
+
+                        # Show full JSON details in expander
+                        with st.expander("📋 Full Bag Details (JSON)"):
+                            st.json(bag_info)
+
                     elif response.status_code == 404:
                         st.warning(f"Bag {bag_tag} not found in system")
                     else:
@@ -110,6 +198,29 @@ elif page == "🔍 Bag Lookup":
                     st.error(f"Failed to connect to API: {str(e)}")
         else:
             st.warning("Please enter a bag tag")
+
+    # Show all bags table
+    st.markdown("---")
+    st.subheader("📦 All Tracked Bags")
+
+    try:
+        response = requests.get(f"{API_URL}/api/v1/bags", timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            bags = data.get('bags', [])
+            if bags:
+                df = pd.DataFrame(bags)
+                # Format risk_score as percentage
+                df['risk_score'] = df['risk_score'].apply(lambda x: f"{float(x)*100:.0f}%")
+                # Select and reorder columns
+                display_cols = ['bag_tag', 'passenger_name', 'pnr', 'status',
+                               'current_location', 'routing', 'risk_score']
+                df = df[display_cols]
+                st.dataframe(df, use_container_width=True, hide_index=True)
+            else:
+                st.info("No bags found")
+    except Exception as e:
+        st.error(f"Failed to fetch bags list: {str(e)}")
 
 elif page == "📈 System Status":
     st.header("System Status")

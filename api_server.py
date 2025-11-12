@@ -327,6 +327,123 @@ async def get_bag_status(bag_tag: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/v1/bags")
+async def list_bags(risk_threshold: float = None, status: str = None, limit: int = 100):
+    """
+    List all bags with optional filtering
+    """
+    try:
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+
+        neon_url = settings.neon_database_url if hasattr(settings, 'neon_database_url') else None
+
+        if not neon_url:
+            raise HTTPException(status_code=503, detail="Database not configured")
+
+        conn = psycopg2.connect(neon_url)
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Build query with filters
+        query = "SELECT * FROM baggage WHERE 1=1"
+        params = []
+
+        if risk_threshold is not None:
+            query += " AND risk_score >= %s"
+            params.append(risk_threshold)
+
+        if status:
+            query += " AND status = %s"
+            params.append(status)
+
+        query += " ORDER BY risk_score DESC, created_at DESC LIMIT %s"
+        params.append(limit)
+
+        cursor.execute(query, params)
+        bags = cursor.fetchall()
+
+        cursor.close()
+        conn.close()
+
+        return {
+            "count": len(bags),
+            "bags": bags
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error listing bags: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/dashboard/stats")
+async def get_dashboard_stats():
+    """
+    Get dashboard statistics and metrics
+    """
+    try:
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+
+        neon_url = settings.neon_database_url if hasattr(settings, 'neon_database_url') else None
+
+        if not neon_url:
+            raise HTTPException(status_code=503, detail="Database not configured")
+
+        conn = psycopg2.connect(neon_url)
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        # Get overall statistics
+        cursor.execute("SELECT COUNT(*) as total FROM baggage")
+        total_bags = cursor.fetchone()['total']
+
+        cursor.execute("SELECT COUNT(*) as count FROM baggage WHERE risk_score >= 0.7")
+        high_risk = cursor.fetchone()['count']
+
+        cursor.execute("SELECT COUNT(*) as count FROM baggage WHERE risk_score >= 0.3 AND risk_score < 0.7")
+        medium_risk = cursor.fetchone()['count']
+
+        cursor.execute("SELECT COUNT(*) as count FROM baggage WHERE risk_score < 0.3")
+        low_risk = cursor.fetchone()['count']
+
+        cursor.execute("SELECT COUNT(*) as count FROM scan_events")
+        total_scans = cursor.fetchone()['count']
+
+        # Get bags by status
+        cursor.execute("SELECT status, COUNT(*) as count FROM baggage GROUP BY status")
+        status_counts = {row['status']: row['count'] for row in cursor.fetchall()}
+
+        # Get recent high-risk bags
+        cursor.execute("""
+            SELECT bag_tag, passenger_name, routing, status, risk_score, current_location
+            FROM baggage
+            WHERE risk_score >= 0.7
+            ORDER BY risk_score DESC, created_at DESC
+            LIMIT 10
+        """)
+        high_risk_bags = cursor.fetchall()
+
+        cursor.close()
+        conn.close()
+
+        return {
+            "total_bags": total_bags,
+            "high_risk_count": high_risk,
+            "medium_risk_count": medium_risk,
+            "low_risk_count": low_risk,
+            "total_scans": total_scans,
+            "status_breakdown": status_counts,
+            "high_risk_bags": high_risk_bags
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching dashboard stats: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Startup/shutdown events
 @app.on_event("startup")
 async def startup_event():
