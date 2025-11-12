@@ -1,0 +1,49 @@
+# Ignore local development files
+logs/
+*.log
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.env
+.env.local
+
+# Ignore dashboard (deploy separately)
+dashboard/
+
+# Ignore tests
+tests/
+*.test.py
+pytest.ini
+.coverage
+
+# Ignore Docker files (not needed on Vercel)
+docker-compose.yml
+Dockerfile
+
+# Ignore Neo4j data
+neo4j_data/
+redis_data/
+
+# Ignore git
+.git/
+.gitignore
+
+# Ignore IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Ignore initialization scripts (run locally)
+init_database.py
+init_neo4j.py
+start.sh
+
+# Ignore development tools
+black.toml
+.mypy_cache/
+.ruff_cache/

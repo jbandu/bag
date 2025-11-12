@@ -1,0 +1,55 @@
+# Railway ignore file - don't deploy these
+
+# Local development
+logs/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Environment
+.env.local
+.env.development
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# Git
+.git/
+.gitignore
+
+# Vercel (not needed for Railway)
+.vercel/
+api/index.py
+api/debug.py
+api/test.py
+api/simple_index.py
+vercel.json
+
+# Dashboard (deploy separately if needed)
+dashboard/
+
+# Sample data scripts
+create_sample_data.py
+populate_neon_data.py
+init_database.py
+init_neo4j.py

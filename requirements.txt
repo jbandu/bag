@@ -1,0 +1,2 @@
+# Ultra-minimal test
+fastapi==0.115.4
