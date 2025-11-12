@@ -1,0 +1,225 @@
+name: Playwright E2E Tests
+
+on:
+  push:
+    branches: [main, develop, claude/**]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+    inputs:
+      deployment_url:
+        description: 'Railway deployment URL to test against'
+        required: false
+        type: string
+      test_suite:
+        description: 'Test suite to run (api, dashboard, or all)'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - api
+          - dashboard
+
+env:
+  NODE_VERSION: '20'
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  test-api:
+    name: API Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'api' || github.event.inputs.test_suite == ''
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Set Railway deployment URL
+        run: |
+          if [ -n "${{ github.event.inputs.deployment_url }}" ]; then
+            echo "API_BASE_URL=${{ github.event.inputs.deployment_url }}" >> $GITHUB_ENV
+          elif [ -n "${{ secrets.RAILWAY_STATIC_URL }}" ]; then
+            echo "API_BASE_URL=${{ secrets.RAILWAY_STATIC_URL }}" >> $GITHUB_ENV
+          else
+            echo "API_BASE_URL=http://localhost:8000" >> $GITHUB_ENV
+          fi
+
+      - name: Setup Python (for local server)
+        if: env.API_BASE_URL == 'http://localhost:8000'
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install Python dependencies (for local server)
+        if: env.API_BASE_URL == 'http://localhost:8000'
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run API tests
+        run: npm run test:api
+        env:
+          CI: true
+          API_BASE_URL: ${{ env.API_BASE_URL }}
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-test-results
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 30
+
+      - name: Upload HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-html-report
+          path: playwright-report/
+          retention-days: 30
+
+  test-dashboard:
+    name: Dashboard UI Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'dashboard' || github.event.inputs.test_suite == ''
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium firefox webkit
+
+      - name: Set Dashboard URL
+        run: |
+          if [ -n "${{ secrets.RAILWAY_DASHBOARD_URL }}" ]; then
+            echo "DASHBOARD_URL=${{ secrets.RAILWAY_DASHBOARD_URL }}" >> $GITHUB_ENV
+          else
+            echo "DASHBOARD_URL=http://localhost:8501" >> $GITHUB_ENV
+          fi
+
+      - name: Setup Python (for local dashboard)
+        if: env.DASHBOARD_URL == 'http://localhost:8501'
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install Python dependencies (for local dashboard)
+        if: env.DASHBOARD_URL == 'http://localhost:8501'
+        run: |
+          pip install -r requirements.txt
+          pip install streamlit
+
+      - name: Start Streamlit dashboard (background)
+        if: env.DASHBOARD_URL == 'http://localhost:8501'
+        run: |
+          streamlit run dashboard/app.py --server.port 8501 --server.headless true &
+          sleep 10  # Wait for dashboard to start
+
+      - name: Run Dashboard tests
+        run: npm run test:dashboard
+        env:
+          CI: true
+          DASHBOARD_URL: ${{ env.DASHBOARD_URL }}
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-test-results
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 30
+
+      - name: Upload screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-failure-screenshots
+          path: test-results/**/*.png
+          retention-days: 7
+
+  test-summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    needs: [test-api, test-dashboard]
+    if: always()
+
+    steps:
+      - name: Download API test results
+        uses: actions/download-artifact@v4
+        with:
+          name: api-test-results
+          path: api-results/
+
+      - name: Download Dashboard test results
+        uses: actions/download-artifact@v4
+        with:
+          name: dashboard-test-results
+          path: dashboard-results/
+
+      - name: Generate test summary
+        run: |
+          echo "## Test Execution Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Environment" >> $GITHUB_STEP_SUMMARY
+          echo "- Branch: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Commit: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- API URL: ${{ env.API_BASE_URL }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Results" >> $GITHUB_STEP_SUMMARY
+          echo "- API Tests: ${{ needs.test-api.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Dashboard Tests: ${{ needs.test-dashboard.result }}" >> $GITHUB_STEP_SUMMARY
+
+  # Deploy test report to GitHub Pages (optional)
+  deploy-report:
+    name: Deploy Test Report
+    runs-on: ubuntu-latest
+    needs: [test-api, test-dashboard]
+    if: always() && github.ref == 'refs/heads/main'
+
+    permissions:
+      contents: write
+      pages: write
+
+    steps:
+      - name: Download test reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: '*-html-report'
+          path: reports/
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./reports
+          destination_dir: test-reports/${{ github.run_number }}
