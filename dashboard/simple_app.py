@@ -18,7 +18,7 @@ st.set_page_config(
 
 # API URL - configurable via environment or default to Railway API
 import os
-API_URL = os.getenv("API_URL", "https://web-production-3965.up.railway.app")
+API_URL = os.getenv("API_URL", "https://web-production-3965.up.railway.app").strip()
 
 # Custom CSS
 st.markdown("""
