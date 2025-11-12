@@ -14,9 +14,63 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from loguru import logger
+import time
 
 from utils.database import redis_cache, supabase_db
 from orchestrator.baggage_orchestrator import orchestrator
+
+
+# Helper function to fetch real-time data
+def fetch_recent_scans(limit=10):
+    """Fetch recent scan events from database"""
+    try:
+        # Try to fetch from Supabase
+        result = supabase_db.table('scan_events') \
+            .select('*') \
+            .order('timestamp', desc=True) \
+            .limit(limit) \
+            .execute()
+
+        if result.data:
+            df = pd.DataFrame(result.data)
+            # Rename columns to match display format
+            df['Time'] = pd.to_datetime(df['timestamp'])
+            df['Bag Tag'] = df['bag_tag']
+            df['Location'] = df['location']
+            df['Status'] = df['status']
+            return df[['Time', 'Bag Tag', 'Location', 'Status']].head(limit)
+    except Exception as e:
+        logger.warning(f"Could not fetch real-time data: {e}")
+
+    # Fallback to mock data if database unavailable
+    return pd.DataFrame({
+        'Time': pd.date_range(end=datetime.now(), periods=limit, freq='5min')[::-1],
+        'Bag Tag': [f'CM{1000+i}' for i in range(limit)],
+        'Location': ['PTY-T1', 'MIA-T3', 'PTY-BHS', 'EWR-T1', 'PTY-T1',
+                     'JFK-T8', 'PTY-BHS', 'MIA-T3', 'PTY-T1', 'ORD-T1'][:limit],
+        'Status': ['In Transit', 'Arrived', 'Loading', 'In Transit', 'Checked In',
+                   'Sortation', 'Arrived', 'Loading', 'Delayed', 'In Transit'][:limit],
+        'Risk Score': [0.2, 0.1, 0.3, 0.5, 0.1, 0.4, 0.2, 0.3, 0.85, 0.7][:limit]
+    })
+
+
+def fetch_high_risk_bags(limit=10):
+    """Fetch bags with high risk scores"""
+    try:
+        result = supabase_db.table('risk_assessments') \
+            .select('*, baggage(passenger_name, pnr)') \
+            .gte('risk_score', 0.7) \
+            .order('risk_score', desc=True) \
+            .limit(limit) \
+            .execute()
+
+        if result.data:
+            return pd.DataFrame(result.data)
+    except Exception as e:
+        logger.warning(f"Could not fetch high-risk bags: {e}")
+
+    # Fallback mock data
+    return None
 
 
 # Page config
@@ -52,6 +106,14 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
+# Initialize session state for auto-refresh
+if 'auto_refresh_enabled' not in st.session_state:
+    st.session_state.auto_refresh_enabled = True
+if 'refresh_interval' not in st.session_state:
+    st.session_state.refresh_interval = 30
+if 'last_refresh' not in st.session_state:
+    st.session_state.last_refresh = datetime.now()
+
 # App title
 st.title("🎒 Baggage Operations Intelligence Platform")
 st.markdown("### AI-Powered Predictive Baggage Management")
@@ -59,6 +121,50 @@ st.markdown("### AI-Powered Predictive Baggage Management")
 # Sidebar
 with st.sidebar:
     st.header("⚙️ Controls")
+
+    # Auto-refresh settings
+    st.subheader("🔄 Auto-Refresh")
+
+    auto_refresh = st.toggle(
+        "Enable Auto-Refresh",
+        value=st.session_state.auto_refresh_enabled,
+        help="Automatically refresh dashboard data"
+    )
+    st.session_state.auto_refresh_enabled = auto_refresh
+
+    if auto_refresh:
+        refresh_options = {
+            "30 seconds": 30,
+            "1 minute": 60,
+            "2 minutes": 120,
+            "5 minutes": 300
+        }
+
+        selected_interval = st.selectbox(
+            "Refresh Interval",
+            options=list(refresh_options.keys()),
+            index=0,
+            help="How often to refresh the dashboard"
+        )
+        st.session_state.refresh_interval = refresh_options[selected_interval]
+
+        # Calculate time until next refresh
+        time_since_refresh = (datetime.now() - st.session_state.last_refresh).total_seconds()
+        time_until_refresh = max(0, st.session_state.refresh_interval - time_since_refresh)
+
+        # Display countdown
+        if time_until_refresh > 0:
+            minutes = int(time_until_refresh // 60)
+            seconds = int(time_until_refresh % 60)
+            if minutes > 0:
+                countdown_text = f"Next refresh in: {minutes}m {seconds}s"
+            else:
+                countdown_text = f"Next refresh in: {seconds}s"
+            st.info(countdown_text)
+        else:
+            st.info("Refreshing now...")
+
+    st.divider()
     
     # Manual scan input
     st.subheader("📥 Process Scan Event")
@@ -85,11 +191,13 @@ with st.sidebar:
             st.warning("Please enter scan data")
     
     st.divider()
-    
-    # Refresh controls
-    if st.button("🔄 Refresh Dashboard", use_container_width=True):
+
+    # Manual refresh button
+    st.subheader("⚡ Manual Actions")
+    if st.button("🔄 Refresh Now", use_container_width=True, help="Force immediate refresh"):
+        st.session_state.last_refresh = datetime.now()
         st.rerun()
-    
+
     st.markdown("---")
     st.markdown("**Copa Airlines**\n\nPowered by Number Labs")
 
@@ -145,20 +253,25 @@ with tab1:
         )
     
     st.divider()
-    
+
     # Recent scan events
     st.subheader("Recent Scan Events")
-    
-    # Mock data for demonstration
-    recent_scans = pd.DataFrame({
-        'Time': pd.date_range(end=datetime.now(), periods=10, freq='5min')[::-1],
-        'Bag Tag': [f'CM{1000+i}' for i in range(10)],
-        'Location': ['PTY-T1', 'MIA-T3', 'PTY-BHS', 'EWR-T1', 'PTY-T1', 
-                     'JFK-T8', 'PTY-BHS', 'MIA-T3', 'PTY-T1', 'ORD-T1'],
-        'Status': ['In Transit', 'Arrived', 'Loading', 'In Transit', 'Checked In',
-                   'In Transit', 'Sortation', 'Arrived', 'Loading', 'Delayed'],
-        'Risk Score': [0.2, 0.1, 0.3, 0.5, 0.1, 0.7, 0.4, 0.2, 0.3, 0.85]
-    })
+
+    # Fetch real-time data (refreshes automatically with dashboard)
+    with st.spinner("Loading recent scans..."):
+        recent_scans = fetch_recent_scans(limit=10)
+
+        # Add risk scores if not present
+        if 'Risk Score' not in recent_scans.columns:
+            # Generate risk scores based on status
+            risk_map = {
+                'Delayed': 0.85, 'Missing': 0.95, 'At Risk': 0.75,
+                'In Transit': 0.2, 'Arrived': 0.1, 'Loading': 0.3,
+                'Checked In': 0.1, 'Sortation': 0.4, 'Loaded': 0.15
+            }
+            recent_scans['Risk Score'] = recent_scans['Status'].map(
+                lambda x: risk_map.get(x, 0.3)
+            )
     
     # Color code by risk
     def highlight_risk(row):
@@ -405,7 +518,18 @@ with col1:
     st.markdown("**System Status:** 🟢 All systems operational")
 
 with col2:
-    st.markdown(f"**Last Updated:** {datetime.now().strftime('%H:%M:%S')}")
+    refresh_status = "🔄 Auto-refresh ON" if st.session_state.auto_refresh_enabled else "⏸️ Auto-refresh OFF"
+    st.markdown(f"**Status:** {refresh_status}")
+    st.markdown(f"**Last Updated:** {st.session_state.last_refresh.strftime('%H:%M:%S')}")
 
 with col3:
     st.markdown("**Version:** 1.0.0 | **Build:** Production")
+
+# Auto-refresh trigger (must be at the end)
+if st.session_state.auto_refresh_enabled:
+    time_since_refresh = (datetime.now() - st.session_state.last_refresh).total_seconds()
+
+    if time_since_refresh >= st.session_state.refresh_interval:
+        st.session_state.last_refresh = datetime.now()
+        time.sleep(0.1)  # Small delay to ensure UI updates
+        st.rerun()
