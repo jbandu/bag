@@ -43,7 +43,8 @@ api/index.py
 api/debug.py
 api/test.py
 api/simple_index.py
-vercel.json
+requirements-vercel.txt
+.vercelignore
 
 # Dashboard (deploy separately if needed)
 dashboard/
@@ -53,3 +54,10 @@ create_sample_data.py
 populate_neon_data.py
 init_database.py
 init_neo4j.py
+
+# Test files (don't deploy to production)
+tests/
+playwright.config.ts
+package.json
+node_modules/
+.env.test.example
