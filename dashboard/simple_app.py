@@ -99,7 +99,7 @@ if page == "📊 Dashboard Overview":
                                 'Medium Risk': '#FFB84D',
                                 'High Risk': '#FF4444'
                             })
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
 
             with col2:
                 st.subheader("📈 Status Breakdown")
@@ -112,7 +112,7 @@ if page == "📊 Dashboard Overview":
                     fig = px.bar(status_df, x='Status', y='Count',
                                 color='Count',
                                 color_continuous_scale='Viridis')
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width='stretch')
                 else:
                     st.info("No status data available")
 
@@ -126,7 +126,7 @@ if page == "📊 Dashboard Overview":
                 df['risk_score'] = df['risk_score'].apply(lambda x: f"{float(x)*100:.0f}%")
                 st.dataframe(
                     df,
-                    use_container_width=True,
+                    width='stretch',
                     hide_index=True
                 )
             else:
@@ -216,7 +216,7 @@ elif page == "🔍 Bag Lookup":
                 display_cols = ['bag_tag', 'passenger_name', 'pnr', 'status',
                                'current_location', 'routing', 'risk_score']
                 df = df[display_cols]
-                st.dataframe(df, use_container_width=True, hide_index=True)
+                st.dataframe(df, width='stretch', hide_index=True)
             else:
                 st.info("No bags found")
     except Exception as e:
