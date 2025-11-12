@@ -41,12 +41,18 @@ class Settings(BaseSettings):
     # Communication Services
     twilio_account_sid: Optional[str] = None
     twilio_auth_token: Optional[str] = None
-    twilio_from_number: Optional[str] = None
-    
+    twilio_phone_number: Optional[str] = None
+
     sendgrid_api_key: Optional[str] = None
-    sendgrid_from_email: Optional[str] = None
-    
+    sendgrid_from_email: str = "noreply@copaair.com"
+    sendgrid_from_name: str = "Copa Airlines Baggage Operations"
+
     firebase_credentials_path: Optional[str] = None
+
+    # Notification Settings
+    auto_notify_high_risk: bool = True
+    auto_notify_threshold: float = 0.7
+    notification_enabled: bool = True
     
     # Courier Services
     courier_api_url: Optional[str] = None

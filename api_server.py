@@ -64,8 +64,8 @@ if settings.environment == "development":
 # FastAPI app
 app = FastAPI(
     title="Baggage Operations API",
-    description="AI-Powered Baggage Intelligence Platform with Advanced Filtering & Batch Operations",
-    version="1.1.0",
+    description="AI-Powered Baggage Intelligence Platform with Advanced Filtering, Batch Operations & Automated Passenger Notifications",
+    version="1.2.0",
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -145,14 +145,31 @@ class BatchBagQuery(BaseModel):
     bag_tags: List[str] = Field(..., description="List of bag tags to query", min_items=1, max_items=100)
 
 
+class NotificationRequest(BaseModel):
+    """Send notification to passenger"""
+    bag_tag: str = Field(..., description="Bag tag identifier")
+    passenger_phone: Optional[str] = Field(None, description="Phone number (E.164 format)")
+    passenger_email: Optional[str] = Field(None, description="Email address")
+    device_token: Optional[str] = Field(None, description="Firebase device token for push")
+    passenger_name: str = Field(..., description="Passenger name")
+    notification_type: str = Field(..., description="Type: high_risk, delayed, found, delivered")
+    channels: List[str] = Field(default=["sms", "email"], description="Notification channels")
+    custom_message: Optional[str] = Field(None, description="Optional custom message override")
+
+
+class BulkNotificationRequest(BaseModel):
+    """Send notifications to multiple passengers"""
+    notifications: List[NotificationRequest] = Field(..., description="List of notifications", max_items=50)
+
+
 # Root endpoint
 @app.get("/")
 async def root():
     """API Welcome and Documentation"""
     return {
         "service": "Baggage Operations Intelligence Platform",
-        "version": "1.1.0",
-        "description": "AI-Powered Baggage Intelligence with 8 Specialized Agents",
+        "version": "1.2.0",
+        "description": "AI-Powered Baggage Intelligence with 8 Specialized Agents + Automated Notifications",
         "status": "operational",
         "endpoints": {
             "health": "/health",
@@ -167,12 +184,16 @@ async def root():
             "list_scans": "GET /api/v1/scans (with pagination & filtering)",
             "batch_query_bags": "POST /api/v1/bags/batch",
             "batch_process_scans": "POST /api/v1/scans/batch",
-            "dashboard_stats": "GET /api/v1/dashboard/stats"
+            "dashboard_stats": "GET /api/v1/dashboard/stats",
+            "send_notification": "POST /api/v1/notifications/send",
+            "send_bulk_notifications": "POST /api/v1/notifications/bulk",
+            "get_notification_history": "GET /api/v1/notifications/history/{bag_tag}"
         },
         "features": {
             "pagination": "All list endpoints support limit/offset pagination",
             "filtering": "Advanced filtering by status, risk, location, date range, etc.",
-            "batch_operations": "Process up to 100 bags/scans in a single request"
+            "batch_operations": "Process up to 100 bags/scans in a single request",
+            "notifications": "Multi-channel passenger communications (SMS, Email, Push)"
         },
         "agents": [
             "Scan Event Processor",
@@ -780,6 +801,232 @@ async def get_dashboard_stats():
     except Exception as e:
         logger.error(f"Error fetching dashboard stats: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ========================================
+# Notification Endpoints
+# ========================================
+
+def get_notification_service():
+    """Lazy load notification service"""
+    try:
+        from utils.notifications import notification_service
+        return notification_service
+    except Exception as e:
+        logger.error(f"Failed to load notification service: {e}")
+        raise HTTPException(status_code=503, detail="Notification service unavailable")
+
+
+@app.post("/api/v1/notifications/send")
+async def send_notification(request: NotificationRequest):
+    """
+    Send notification to a passenger
+
+    **Channels supported:**
+    - `sms`: SMS via Twilio
+    - `email`: Email via SendGrid
+    - `push`: Push notification via Firebase
+
+    **Notification types:**
+    - `high_risk`: Bag requires attention
+    - `delayed`: Bag delayed, arriving on next flight
+    - `found`: Bag located and forwarded
+    - `delivered`: Bag successfully delivered
+    - `custom`: Use custom_message field
+
+    **Example:**
+    ```json
+    {
+      "bag_tag": "CM123456",
+      "passenger_phone": "+15551234567",
+      "passenger_email": "passenger@example.com",
+      "passenger_name": "John Smith",
+      "notification_type": "high_risk",
+      "channels": ["sms", "email"]
+    }
+    ```
+    """
+    try:
+        notif_service = get_notification_service()
+
+        # Get bag data from database
+        bag_data = {
+            'bag_tag': request.bag_tag,
+            'current_location': 'PTY',  # TODO: Fetch from database
+            'destination': 'Unknown',    # TODO: Fetch from database
+            'risk_score': 0.0            # TODO: Fetch from database
+        }
+
+        # Prepare passenger info
+        passenger_info = {
+            'name': request.passenger_name,
+            'phone': request.passenger_phone,
+            'email': request.passenger_email,
+            'device_token': request.device_token
+        }
+
+        # Send multi-channel notification
+        result = notif_service.send_multi_channel(
+            channels=request.channels,
+            passenger_info=passenger_info,
+            notification_type=request.notification_type,
+            bag_data=bag_data,
+            custom_message=request.custom_message
+        )
+
+        logger.info(f"Notification sent for bag {request.bag_tag} | Success: {result['success_count']}/{result['total_channels']}")
+
+        return {
+            "status": "success",
+            "notification_result": result,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error sending notification: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/notifications/bulk")
+async def send_bulk_notifications(request: BulkNotificationRequest, background_tasks: BackgroundTasks):
+    """
+    Send notifications to multiple passengers (up to 50 at once)
+
+    **Example:**
+    ```json
+    {
+      "notifications": [
+        {
+          "bag_tag": "CM123456",
+          "passenger_phone": "+15551234567",
+          "passenger_email": "passenger1@example.com",
+          "passenger_name": "John Smith",
+          "notification_type": "high_risk",
+          "channels": ["sms", "email"]
+        },
+        {
+          "bag_tag": "CM789012",
+          "passenger_email": "passenger2@example.com",
+          "passenger_name": "Jane Doe",
+          "notification_type": "delayed",
+          "channels": ["email"]
+        }
+      ]
+    }
+    ```
+    """
+    try:
+        notif_service = get_notification_service()
+
+        results = []
+        for idx, notif_request in enumerate(request.notifications):
+            try:
+                # Get bag data (simplified for now)
+                bag_data = {
+                    'bag_tag': notif_request.bag_tag,
+                    'current_location': 'PTY',
+                    'destination': 'Unknown',
+                    'risk_score': 0.0
+                }
+
+                passenger_info = {
+                    'name': notif_request.passenger_name,
+                    'phone': notif_request.passenger_phone,
+                    'email': notif_request.passenger_email,
+                    'device_token': notif_request.device_token
+                }
+
+                result = notif_service.send_multi_channel(
+                    channels=notif_request.channels,
+                    passenger_info=passenger_info,
+                    notification_type=notif_request.notification_type,
+                    bag_data=bag_data,
+                    custom_message=notif_request.custom_message
+                )
+
+                results.append({
+                    "index": idx,
+                    "bag_tag": notif_request.bag_tag,
+                    "status": "success",
+                    "channels_sent": result['success_count'],
+                    "total_channels": result['total_channels']
+                })
+
+            except Exception as e:
+                logger.error(f"Error sending notification {idx}: {str(e)}")
+                results.append({
+                    "index": idx,
+                    "bag_tag": notif_request.bag_tag if hasattr(notif_request, 'bag_tag') else "unknown",
+                    "status": "error",
+                    "error": str(e)
+                })
+
+        success_count = sum(1 for r in results if r['status'] == 'success')
+
+        return {
+            "status": "completed",
+            "total_notifications": len(request.notifications),
+            "successful": success_count,
+            "failed": len(request.notifications) - success_count,
+            "results": results,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Error in bulk notifications: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/notifications/history/{bag_tag}")
+async def get_notification_history(bag_tag: str, limit: int = Query(10, ge=1, le=100)):
+    """
+    Get notification history for a specific bag
+
+    Returns list of notifications sent for this bag tag
+    """
+    try:
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+
+        neon_url = settings.neon_database_url if hasattr(settings, 'neon_database_url') else None
+
+        if not neon_url:
+            return {
+                "bag_tag": bag_tag,
+                "notifications": [],
+                "message": "Database not configured - history unavailable"
+            }
+
+        conn = psycopg2.connect(neon_url)
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+        cursor.execute("""
+            SELECT * FROM passenger_notifications
+            WHERE bag_tag = %s
+            ORDER BY sent_at DESC
+            LIMIT %s
+        """, (bag_tag, limit))
+
+        notifications = cursor.fetchall()
+
+        cursor.close()
+        conn.close()
+
+        return {
+            "bag_tag": bag_tag,
+            "total_notifications": len(notifications),
+            "notifications": notifications
+        }
+
+    except Exception as e:
+        logger.warning(f"Error fetching notification history: {str(e)}")
+        return {
+            "bag_tag": bag_tag,
+            "notifications": [],
+            "error": str(e)
+        }
 
 
 # Startup/shutdown events
