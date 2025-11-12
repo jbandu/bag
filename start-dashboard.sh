@@ -1,5 +1,6 @@
 #!/bin/bash
 # Railway startup script for Streamlit dashboard
+# Updated: 2025-11-11 - Enhanced with real data visualizations
 
 # Railway sets PORT environment variable
 PORT=${PORT:-8501}

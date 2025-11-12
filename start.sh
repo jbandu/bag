@@ -1,5 +1,6 @@
 #!/bin/bash
-# Railway startup script
+# Railway startup script for API
+# Updated: 2025-11-11 - Added new dashboard endpoints
 
 # Railway sets PORT environment variable
 PORT=${PORT:-8000}
