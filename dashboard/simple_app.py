@@ -47,6 +47,7 @@ with st.sidebar:
     page = st.radio("Select View", [
         "📊 Dashboard Overview",
         "🔍 Bag Lookup",
+        "🕸️ Knowledge Graph",
         "📈 System Status",
         "🤖 About"
     ])
@@ -221,6 +222,292 @@ elif page == "🔍 Bag Lookup":
                 st.info("No bags found")
     except Exception as e:
         st.error(f"Failed to fetch bags list: {str(e)}")
+
+elif page == "🕸️ Knowledge Graph":
+    st.header("Knowledge Graph & Ontology")
+    st.markdown("""
+    This knowledge graph represents the baggage operations domain model based on the **gist (Semantic Arts) Foundational Ontology**.
+    It shows the relationships between entities like Baggage, Passengers, Flights, Risk Assessments, and more.
+    """)
+
+    # Tabs for different views
+    kg_tab1, kg_tab2, kg_tab3 = st.tabs(["🕸️ Interactive Graph", "📊 Entity Classes", "📝 Ontology Document"])
+
+    with kg_tab1:
+        st.subheader("Interactive Knowledge Graph Visualization")
+
+        # Import networkx and plotly graph objects for network visualization
+        import plotly.graph_objects as go
+        import networkx as nx
+
+        # Create a sample knowledge graph based on the ontology
+        G = nx.Graph()
+
+        # Define node categories with colors
+        node_colors = {
+            'physical': '#3498db',  # Blue for physical things
+            'digital': '#9b59b6',   # Purple for digital twins
+            'event': '#e74c3c',     # Red for events
+            'agent': '#2ecc71',     # Green for agents
+            'assessment': '#f39c12', # Orange for assessments
+            'case': '#e67e22'       # Dark orange for cases
+        }
+
+        # Add nodes (entities from the ontology)
+        nodes = [
+            ('Baggage', 'physical', 30),
+            ('Passenger', 'physical', 25),
+            ('Flight', 'physical', 25),
+            ('Airport', 'physical', 20),
+            ('BaggageDigitalTwin', 'digital', 30),
+            ('ScanEvent', 'event', 20),
+            ('MishandlingEvent', 'event', 15),
+            ('RecoveryEvent', 'event', 15),
+            ('RiskAssessment', 'assessment', 25),
+            ('ExceptionCase', 'case', 20),
+            ('PIR', 'case', 20),
+            ('AIAgent', 'agent', 20),
+            ('HumanAgent', 'agent', 18),
+            ('CourierDispatch', 'case', 18),
+        ]
+
+        for node, category, size in nodes:
+            G.add_node(node, category=category, size=size)
+
+        # Add edges (relationships from the ontology)
+        edges = [
+            ('Baggage', 'Passenger', 'BELONGS_TO'),
+            ('Baggage', 'Flight', 'ROUTED_ON'),
+            ('BaggageDigitalTwin', 'Baggage', 'REPRESENTS'),
+            ('ScanEvent', 'Baggage', 'SCANS'),
+            ('ScanEvent', 'Airport', 'AT_LOCATION'),
+            ('RiskAssessment', 'Baggage', 'ASSESSES'),
+            ('ExceptionCase', 'Baggage', 'CONCERNS'),
+            ('ExceptionCase', 'HumanAgent', 'ASSIGNED_TO'),
+            ('ExceptionCase', 'RiskAssessment', 'HAS_ASSESSMENT'),
+            ('PIR', 'Baggage', 'DOCUMENTS'),
+            ('CourierDispatch', 'Baggage', 'FOR_BAGGAGE'),
+            ('MishandlingEvent', 'Baggage', 'AFFECTS'),
+            ('AIAgent', 'ScanEvent', 'PROCESSED'),
+            ('AIAgent', 'RiskAssessment', 'CREATED'),
+            ('BaggageDigitalTwin', 'ScanEvent', 'HAS_SCAN'),
+        ]
+
+        for source, target, rel_type in edges:
+            G.add_edge(source, target, relationship=rel_type)
+
+        # Create layout
+        pos = nx.spring_layout(G, k=2, iterations=50, seed=42)
+
+        # Create edge traces
+        edge_traces = []
+        for edge in G.edges():
+            x0, y0 = pos[edge[0]]
+            x1, y1 = pos[edge[1]]
+            edge_trace = go.Scatter(
+                x=[x0, x1, None],
+                y=[y0, y1, None],
+                mode='lines',
+                line=dict(width=1, color='#888'),
+                hoverinfo='none',
+                showlegend=False
+            )
+            edge_traces.append(edge_trace)
+
+        # Create node traces by category
+        node_trace_by_category = {}
+        for node in G.nodes():
+            category = G.nodes[node]['category']
+            size = G.nodes[node]['size']
+
+            if category not in node_trace_by_category:
+                node_trace_by_category[category] = {
+                    'x': [], 'y': [], 'text': [], 'size': []
+                }
+
+            x, y = pos[node]
+            node_trace_by_category[category]['x'].append(x)
+            node_trace_by_category[category]['y'].append(y)
+            node_trace_by_category[category]['text'].append(node)
+            node_trace_by_category[category]['size'].append(size)
+
+        # Create plotly traces for each category
+        node_traces = []
+        for category, data in node_trace_by_category.items():
+            trace = go.Scatter(
+                x=data['x'],
+                y=data['y'],
+                mode='markers+text',
+                name=category.capitalize(),
+                marker=dict(
+                    size=data['size'],
+                    color=node_colors[category],
+                    line=dict(width=2, color='white')
+                ),
+                text=data['text'],
+                textposition='top center',
+                textfont=dict(size=10, color='black'),
+                hoverinfo='text'
+            )
+            node_traces.append(trace)
+
+        # Create figure
+        fig = go.Figure(data=edge_traces + node_traces)
+
+        fig.update_layout(
+            title="Baggage Operations Knowledge Graph",
+            titlefont_size=16,
+            showlegend=True,
+            hovermode='closest',
+            margin=dict(b=20, l=5, r=5, t=40),
+            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+            height=700,
+            plot_bgcolor='#f8f9fa'
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+        st.markdown("---")
+        st.subheader("🔗 Key Relationships")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.markdown("""
+            **Core Relationships:**
+            - `Baggage → Passenger` (BELONGS_TO)
+            - `Baggage → Flight` (ROUTED_ON)
+            - `BaggageDigitalTwin → Baggage` (REPRESENTS)
+            - `ScanEvent → Baggage` (SCANS)
+            - `RiskAssessment → Baggage` (ASSESSES)
+            """)
+
+        with col2:
+            st.markdown("""
+            **Case Management:**
+            - `ExceptionCase → Baggage` (CONCERNS)
+            - `ExceptionCase → HumanAgent` (ASSIGNED_TO)
+            - `PIR → Baggage` (DOCUMENTS)
+            - `CourierDispatch → Baggage` (FOR_BAGGAGE)
+            """)
+
+    with kg_tab2:
+        st.subheader("Entity Classes & Properties")
+
+        # Create expandable sections for each entity type
+        with st.expander("🎒 Baggage (Physical Thing)"):
+            st.markdown("""
+            **Properties:**
+            - `bagTag`: Unique identifier
+            - `weight`: Magnitude (kg)
+            - `dimensions`: Magnitude (cm³)
+            - `color`: Category
+            - `type`: Category (Suitcase, Backpack, DuffelBag)
+            - `contentsValue`: Magnitude (USD)
+            - `specialHandling`: Array (Fragile, Medical, Sports, LiveAnimal)
+            """)
+
+        with st.expander("👤 Passenger (Person)"):
+            st.markdown("""
+            **Properties:**
+            - `pnr`: ID
+            - `name`: Text
+            - `eliteStatus`: Category (None, Silver, Gold, Platinum, Diamond)
+            - `contactEmail`: EmailAddress
+            - `contactPhone`: TelephoneNumber
+            - `lifetimeValue`: Magnitude (USD)
+            - `frequentFlyerNumber`: ID
+            """)
+
+        with st.expander("✈️ Flight (Task)"):
+            st.markdown("""
+            **Properties:**
+            - `flightNumber`: ID
+            - `origin`: GeoPoint
+            - `destination`: GeoPoint
+            - `scheduledDeparture`: TimeInterval
+            - `actualDeparture`: TimeInterval
+            - `scheduledArrival`: TimeInterval
+            - `actualArrival`: TimeInterval
+            - `status`: Category (Scheduled, Boarding, Departed, Arrived, Cancelled, Delayed)
+            """)
+
+        with st.expander("🏢 Airport (Place)"):
+            st.markdown("""
+            **Properties:**
+            - `iataCode`: ID (3-letter)
+            - `icaoCode`: ID (4-letter)
+            - `city`: Text
+            - `country`: Text
+            - `timezone`: Text
+            - `mctDomestic`: Duration (minutes)
+            - `mctInternational`: Duration (minutes)
+            - `performanceScore`: Magnitude (0-10)
+            """)
+
+        with st.expander("💾 BaggageDigitalTwin (Digital Thing)"):
+            st.markdown("""
+            **Properties:**
+            - `physicalBag`: Reference to Baggage
+            - `currentStatus`: BagStatus
+            - `currentLocation`: GeoPoint
+            - `riskScore`: Magnitude (0-1)
+            - `riskLevel`: Category (Low, Medium, High, Critical)
+            - `riskFactors`: Array of Text
+            - `journeyHistory`: Array of ScanEvents
+            """)
+
+        with st.expander("📊 RiskAssessment (Assessment)"):
+            st.markdown("""
+            **Properties:**
+            - `riskScore`: Magnitude (0-1)
+            - `riskLevel`: Category
+            - `primaryFactors`: Array of Text
+            - `recommendedAction`: Category (Monitor, Alert, Intervene, DispatchCourier)
+            - `confidence`: Magnitude (0-1)
+            - `reasoning`: Text
+            - `connectionTimeMinutes`: Duration
+            - `mctMinutes`: Duration
+            """)
+
+        with st.expander("📋 ExceptionCase (Task)"):
+            st.markdown("""
+            **Properties:**
+            - `caseId`: ID
+            - `priority`: Category (P0-Critical, P1-High, P2-Medium, P3-Low)
+            - `status`: Category (Open, InProgress, PendingApproval, Resolved, Closed)
+            - `assignedTo`: Agent reference
+            - `riskAssessment`: RiskAssessment reference
+            - `slaDeadline`: TimeInterval
+            - `actionsTaken`: Array of Actions
+            """)
+
+        with st.expander("🤖 AIAgent (Agent)"):
+            st.markdown("""
+            **Subtypes:**
+            1. **ScanProcessorAgent**: Creates ScanEvent nodes, updates digital twins
+            2. **RiskScorerAgent**: Creates RiskAssessment nodes, calculates risk scores
+            3. **WorldTracerAgent**: Creates PIR nodes, manages mishandling reports
+            4. **SITAHandlerAgent**: Processes SITA Type B messages
+            5. **BaggageXMLAgent**: Handles BaggageXML messages
+            6. **CaseManagerAgent**: Creates and manages ExceptionCases
+            7. **CourierDispatchAgent**: Handles courier dispatch decisions
+            8. **PassengerCommsAgent**: Manages passenger notifications
+            """)
+
+    with kg_tab3:
+        st.subheader("📝 Complete Ontology Documentation")
+
+        # Read and display the markdown document
+        try:
+            with open('/home/user/bag/docs/knowledge-graph-ontology.md', 'r') as f:
+                ontology_content = f.read()
+
+            st.markdown(ontology_content)
+        except Exception as e:
+            st.error(f"Failed to load ontology document: {str(e)}")
+            st.info("The ontology document should be located at: `/docs/knowledge-graph-ontology.md`")
 
 elif page == "📈 System Status":
     st.header("System Status")
