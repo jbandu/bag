@@ -259,7 +259,7 @@ class ScanMessage(BaseSemanticMessage):
     bag_tag: constr(min_length=6, max_length=10) = Field(
         ...,
         description="Baggage tag number (e.g., CM123456)",
-        regex="^[A-Z]{2}[0-9]{4,8}$"
+        pattern="^[A-Z]{2}[0-9]{4,8}$"
     )
 
     scan_type: ScanType = Field(
@@ -368,7 +368,7 @@ class RiskMessage(BaseSemanticMessage):
     bag_tag: constr(min_length=6, max_length=10) = Field(
         ...,
         description="Baggage tag number",
-        regex="^[A-Z]{2}[0-9]{4,8}$"
+        pattern="^[A-Z]{2}[0-9]{4,8}$"
     )
 
     risk_score: confloat(ge=0.0, le=1.0) = Field(
@@ -517,7 +517,7 @@ class ExceptionMessage(BaseSemanticMessage):
     bag_tag: constr(min_length=6, max_length=10) = Field(
         ...,
         description="Baggage tag number",
-        regex="^[A-Z]{2}[0-9]{4,8}$"
+        pattern="^[A-Z]{2}[0-9]{4,8}$"
     )
 
     exception_type: ExceptionType = Field(
@@ -663,7 +663,7 @@ class WorldTracerMessage(BaseSemanticMessage):
     bag_tag: constr(min_length=6, max_length=10) = Field(
         ...,
         description="Baggage tag number",
-        regex="^[A-Z]{2}[0-9]{4,8}$"
+        pattern="^[A-Z]{2}[0-9]{4,8}$"
     )
 
     pir_type: PIRType = Field(
@@ -1023,7 +1023,7 @@ class DispatchMessage(BaseSemanticMessage):
     bag_tag: constr(min_length=6, max_length=10) = Field(
         ...,
         description="Baggage tag number",
-        regex="^[A-Z]{2}[0-9]{4,8}$"
+        pattern="^[A-Z]{2}[0-9]{4,8}$"
     )
 
     courier_vendor: str = Field(
@@ -1233,7 +1233,7 @@ class NotificationMessage(BaseSemanticMessage):
     contact_phone: Optional[str] = Field(
         None,
         description="Passenger phone number (E.164 format)",
-        regex="^\+[1-9]\d{1,14}$"
+        pattern="^\+[1-9]\d{1,14}$"
     )
 
     # Delivery
