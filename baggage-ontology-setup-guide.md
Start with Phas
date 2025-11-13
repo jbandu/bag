@@ -1,0 +1,837 @@
+🧠 Baggage Operations: Knowledge Graph & Ontology Setup
+Step-by-Step Claude Code Prompts
+Goal: Remove agent friction, API friction, and data friction by implementing semantic models for the entire baggage management system
+📋 PREREQUISITES
+Before starting, ensure you have:
+✅ GitHub repository: https://github.com/jbandu/bag
+✅ Neo4j 5.x running (local or cloud)
+✅ Supabase project with baggage schema
+✅ Redis for caching
+✅ Anthropic API key
+🎯 PHASE 1: Core Ontology Setup (30 minutes)
+Step 1.1: Initialize Neo4j Ontology Schema
+Claude Code Prompt:
+I'm building a baggage operations knowledge graph with semantic models for agent communication. 
+
+CONTEXT:
+- 8 AI agents: Scan Processor, Risk Scorer, WorldTracer, SITA Handler, BaggageXML, Case Manager, Courier Dispatch, Passenger Comms
+- Integration points: PSS, DCS, BHS, WorldTracer, BRS, Messaging Gateway
+- Goal: Enable semantic understanding across all agents to eliminate data friction
+
+TASK 1: Create Neo4j ontology schema
+
+Requirements:
+1. Define core node types:
+   - :Baggage (digital twin with 50+ properties)
+   - :ScanEvent (all scan types: checkin, loading, unloading, transfer, claim)
+   - :Flight (with schedule, gate, aircraft type)
+   - :Passenger (PNR, contact, preferences)
+   - :Location (airport, terminal, carousel, sorting area)
+   - :Agent (each of 8 agents with capabilities)
+   - :Message (Type B, XML, JSON formats)
+   - :Exception (case types, priorities, SLAs)
+   - :Risk (scoring factors, thresholds, predictions)
+
+2. Define relationship types with semantics:
+   - [:SCANNED_AT] (bag -> scan event) with timestamp, agent, location
+   - [:BELONGS_TO] (bag -> passenger) with booking reference
+   - [:CHECKED_ON] (bag -> flight) with segment details
+   - [:LOCATED_AT] (bag -> location) with confidence score
+   - [:HAS_RISK] (bag -> risk) with score, factors, prediction
+   - [:PROCESSED_BY] (event -> agent) with processing time
+   - [:TRIGGERS] (risk -> exception) with threshold, reasoning
+   - [:SENDS_MESSAGE] (agent -> agent) with message type, payload
+   - [:REQUIRES_APPROVAL] (exception -> human) with priority
+   - [:DISPATCHES] (courier -> bag) with cost, ETA
+
+3. Create Cypher schema with constraints and indexes
+
+4. Add semantic properties for each relationship:
+   - confidence_score (0.0-1.0)
+   - reasoning (text explanation)
+   - timestamp (ISO 8601)
+   - agent_id (which agent created this)
+
+Save to: /schema/neo4j_baggage_ontology.cypher
+
+Show me the complete schema with all constraints, indexes, and semantic annotations.
+Step 1.2: Create Semantic Message Ontology
+Claude Code Prompt:
+TASK 2: Define semantic message ontology for agent-to-agent communication
+
+CONTEXT: 
+We have 8 agents that need to communicate:
+1. Scan Event Processor → sends scan data to Risk Scorer, Digital Twin
+2. Risk Scorer → sends risk assessments to Case Manager, Courier Dispatch
+3. WorldTracer → sends PIR data to Case Manager, Passenger Comms
+4. SITA Handler → sends Type B messages to all agents
+5. BaggageXML → sends interline data to Risk Scorer, WorldTracer
+6. Case Manager → orchestrates all agents for exception handling
+7. Courier Dispatch → coordinates with Case Manager, Passenger Comms
+8. Passenger Comms → receives from all agents, sends notifications
+
+Requirements:
+1. Create message ontology with these types:
+   - ScanMessage: {bag_tag, scan_type, location, timestamp, raw_data}
+   - RiskMessage: {bag_tag, risk_score, factors[], prediction, confidence}
+   - ExceptionMessage: {case_id, bag_tag, type, priority, actions[]}
+   - WorldTracerMessage: {pir_number, bag_tag, status, location, routing}
+   - TypeBMessage: {message_type (BTM/BSM/BPM), raw_text, parsed_data}
+   - XMLMessage: {schema_version, airline_code, manifest_data}
+   - DispatchMessage: {courier_id, bag_tag, pickup, delivery, cost, status}
+   - NotificationMessage: {passenger_id, channel, template, variables, sent_at}
+
+2. Define semantic properties for EVERY message:
+   - message_id (UUID)
+   - source_agent (which agent sent it)
+   - target_agents[] (which agents should receive it)
+   - timestamp (when created)
+   - correlation_id (to track message chains)
+   - semantic_intent (what action this message represents)
+   - confidence_score (how confident the sender is)
+   - requires_response (boolean)
+   - priority (1-5)
+
+3. Create Pydantic models for all message types with validation
+
+4. Add Neo4j relationships:
+   [:SENDS_MESSAGE]->(message)-[:TO_AGENT]->
+   with properties: latency_ms, success, error_if_failed
+
+Save to: 
+- /models/semantic_messages.py (Pydantic models)
+- /schema/message_ontology.cypher (Neo4j schema)
+
+Show me the complete message ontology with validation rules.
+🎯 PHASE 2: Agent Communication Graph (45 minutes)
+Step 2.1: Build Agent Collaboration Ontology
+Claude Code Prompt:
+TASK 3: Create agent collaboration knowledge graph
+
+CONTEXT:
+8 agents need to work together in coordinated workflows. Example flow:
+1. Scan arrives → Scan Processor validates → updates Digital Twin
+2. Digital Twin change → Risk Scorer evaluates → calculates risk
+3. High risk detected → Case Manager creates exception → routes to appropriate team
+4. Exception approved → Courier Dispatch finds best courier → books delivery
+5. All steps → Passenger Comms sends proactive notifications
+
+Requirements:
+1. Define agent collaboration patterns:
+   - Sequential: A completes → B starts
+   - Parallel: A and B run simultaneously → merge results
+   - Conditional: A evaluates → routes to B or C
+   - Loop: A → B → C → back to A with feedback
+   - Approval: A requests → Human approves → B executes
+
+2. Create agent capability ontology:
+   - Each agent has capabilities[] with confidence scores
+   - Example: Risk Scorer capabilities:
+     * predict_mishandling: 0.92 confidence
+     * calculate_mct_risk: 0.95 confidence  
+     * detect_irrops_impact: 0.88 confidence
+     * assess_weather_risk: 0.85 confidence
+
+3. Define agent dependencies:
+   - Which agents MUST run before others
+   - Which agents CAN run in parallel
+   - Which agents CONFLICT (can't run together)
+   - Which agents COMPLEMENT (work better together)
+
+4. Create Neo4j graph:
+   (:Agent)-[:DEPENDS_ON {type, strength, reason}]->(:Agent)
+   (:Agent)-[:PARALLEL_WITH {sync_point, merge_strategy}]->(:Agent)
+   (:Agent)-[:ROUTES_TO {condition, priority}]->(:Agent)
+   (:Agent)-[:REQUESTS_APPROVAL {threshold, approver_role}]->(:Human)
+
+5. Add orchestration metadata:
+   - max_parallelism (how many instances can run)
+   - avg_execution_time_ms
+   - success_rate
+   - retry_policy {max_attempts, backoff_strategy}
+
+Save to:
+- /schema/agent_collaboration.cypher
+- /models/agent_capabilities.py
+- /orchestration/agent_graph.py (LangGraph implementation)
+
+Show me the complete agent collaboration graph with all patterns.
+Step 2.2: Implement Semantic Event Streaming
+Claude Code Prompt:
+TASK 4: Build semantic event stream processor
+
+CONTEXT:
+Need to process 1000+ scan events/minute with semantic understanding:
+- What type of scan is this?
+- What does it mean for the bag's journey?
+- Which agents need to know about it?
+- What risks does it introduce?
+- What actions should be triggered?
+
+Requirements:
+1. Create event ontology for all scan types:
+   - CHECKIN: bag accepted at counter
+   - SORTATION: bag in BHS sorting
+   - LOADING: bag loaded on aircraft
+   - TRANSFER: bag moving to connecting flight
+   - CLAIM: bag at baggage claim
+   - MANUAL: manual scan by agent
+   - EXCEPTION: scan during exception handling
+
+2. Add semantic enrichment for each event:
+   - expected_next_scan (what should happen next)
+   - time_window (when it should happen)
+   - risk_factors[] (what could go wrong)
+   - relevant_agents[] (who needs to know)
+   - required_actions[] (what should be done)
+
+3. Implement event processor that:
+   - Receives raw scan event
+   - Enriches with semantic meaning
+   - Updates digital twin in Neo4j
+   - Publishes to relevant agents via message bus
+   - Logs event chain for debugging
+
+4. Create event sequence validator:
+   - Checks if scan sequence is valid
+   - Example: LOADING must come after SORTATION
+   - Detects missing scans (gaps in sequence)
+   - Flags anomalies (unexpected scans)
+
+5. Build event correlation engine:
+   - Links related events across bags
+   - Example: all bags on same flight
+   - Detects patterns (bulk mishandling)
+   - Triggers batch actions
+
+Save to:
+- /agents/scan_processor_semantic.py
+- /models/event_ontology.py
+- /utils/event_validator.py
+- /utils/event_correlator.py
+
+Show me the semantic event processor with validation and correlation.
+🎯 PHASE 3: Data Friction Elimination (60 minutes)
+Step 3.1: Build Unified Data Model
+Claude Code Prompt:
+TASK 5: Create unified semantic data model to eliminate data friction
+
+PROBLEM:
+Currently data is scattered across:
+- DCS (bag check-in data) - proprietary format
+- BHS (scan events) - vendor-specific format  
+- WorldTracer (PIR data) - IATA format
+- Type B messages - legacy SITA format
+- BaggageXML - modern XML format
+- Internal agents - various JSON schemas
+
+Each system has different field names, data types, and meanings!
+
+Requirements:
+1. Define canonical baggage data model (the source of truth):
+   ```python
+   class CanonicalBag:
+       # Identity
+       bag_tag: str  # 10-digit IATA standard
+       license_plate: str  # BHS internal ID
+       
+       # Journey
+       origin: AirportCode  # IATA 3-letter
+       destination: AirportCode
+       intermediate_stops: List[AirportCode]
+       current_location: Location  # semantic location
+       
+       # Passenger
+       passenger_name: str
+       pnr: str  # booking reference
+       contact: ContactInfo
+       
+       # Flight
+       outbound_flight: FlightNumber
+       inbound_flight: Optional[FlightNumber]  # if transfer
+       
+       # Status
+       current_state: BagState  # enum
+       risk_level: RiskLevel  # LOW/MEDIUM/HIGH/CRITICAL
+       exception_status: Optional[ExceptionCase]
+       
+       # Semantic metadata
+       confidence: float  # 0.0-1.0 - how confident are we in this data
+       data_sources: List[str]  # which systems contributed
+       last_updated: datetime
+       updated_by_agent: str
+Create bidirectional mappers for EACH external format:
+DCS → Canonical (parse check-in data)
+BHS → Canonical (parse scan events)
+WorldTracer → Canonical (parse PIR fields)
+Type B → Canonical (parse BTM/BSM/BPM)
+BaggageXML → Canonical (parse XML manifest)
+Canonical → each format (for sending data out)
+Add semantic mapping rules:
+Handle missing fields (use defaults or infer)
+Resolve conflicts (which source is authoritative)
+Validate data quality (flag suspicious values)
+Enrich with context (add semantic meaning)
+Implement data fusion:
+Combine data from multiple sources
+Resolve contradictions intelligently
+Calculate confidence scores
+Track data lineage
+Create validation layer:
+Check IATA standards compliance
+Validate business rules
+Detect data anomalies
+Flag for human review if needed
+Save to:
+/models/canonical_bag.py
+/mappers/dcs_mapper.py
+/mappers/bhs_mapper.py
+/mappers/worldtracer_mapper.py
+/mappers/typeb_mapper.py
+/mappers/xml_mapper.py
+/utils/data_fusion.py
+/utils/data_validator.py
+Show me the complete unified data model with all mappers and fusion logic.
+---
+
+### Step 3.2: Implement Semantic API Gateway
+
+**Claude Code Prompt:**
+TASK 6: Build semantic API gateway to eliminate API friction
+PROBLEM:
+8 agents, 7 external systems = 56 potential integration points!
+Each with different:
+Authentication (OAuth, API key, basic auth, certificates)
+Rate limits (various per system)
+Data formats (JSON, XML, Type B text, proprietary)
+Error handling (different error codes)
+Retry policies (some systems are fragile)
+Requirements:
+Create unified API gateway that:
+Provides ONE consistent interface for agents
+Handles ALL external system quirks internally
+Manages authentication transparently
+Enforces rate limits automatically
+Retries failed requests intelligently
+Caches responses where appropriate
+Define semantic API operations (not REST endpoints):
+# Instead of: POST /worldtracer/api/v2/pir/create
+# Agents call: gateway.create_pir(bag_data, semantic_context)
+
+# The gateway:
+- Understands semantic intent
+- Chooses appropriate API
+- Transforms data format
+- Handles authentication
+- Retries on failure
+- Returns semantic response
+Implement adapter pattern for each system:
+DCS Adapter: handles Amadeus/Sabre APIs
+BHS Adapter: handles vendor-specific protocols
+WorldTracer Adapter: handles SITA WorldTracer API
+Type B Adapter: handles message parsing/sending
+XML Adapter: handles BaggageXML schema
+Courier Adapter: handles 3PL APIs (FedEx, UPS, etc.)
+Notification Adapter: handles Twilio, SendGrid, Firebase
+Add intelligent features:
+Circuit breaker (stop calling failing systems)
+Fallback strategies (use alternative if primary fails)
+Request coalescing (batch multiple requests)
+Response caching (avoid redundant calls)
+Priority queuing (critical requests first)
+Create monitoring and observability:
+Track API call latencies
+Measure success rates
+Alert on threshold breaches
+Provide agent visibility into API health
+Save to:
+/gateway/semantic_gateway.py
+/gateway/adapters/dcs_adapter.py
+/gateway/adapters/bhs_adapter.py
+/gateway/adapters/worldtracer_adapter.py
+/gateway/adapters/typeb_adapter.py
+/gateway/adapters/xml_adapter.py
+/gateway/adapters/courier_adapter.py
+/gateway/adapters/notification_adapter.py
+/gateway/circuit_breaker.py
+/gateway/rate_limiter.py
+/gateway/cache_manager.py
+Show me the complete semantic API gateway with all adapters and intelligent features.
+---
+
+## 🎯 PHASE 4: Agent Orchestration Layer (60 minutes)
+
+### Step 4.1: Build LangGraph Orchestrator
+
+**Claude Code Prompt:**
+TASK 7: Implement semantic agent orchestration with LangGraph
+CONTEXT:
+We have 8 specialized agents that need to coordinate in complex workflows:
+WORKFLOW EXAMPLE - High Risk Bag Detected:
+Risk Scorer detects high risk (score > 0.7)
+PARALLEL:
+a. Case Manager creates exception case
+b. WorldTracer checks if PIR already exists
+c. Passenger Comms prepares notification
+CONDITIONAL:
+If risk > 0.9 AND value > $500 → Human approval required
+Else → Auto-dispatch courier
+SEQUENCE:
+a. Courier Dispatch finds best courier
+b. Sends dispatch request
+c. Confirms booking
+FINALLY:
+a. Update digital twin with all actions
+b. Send passenger notification
+c. Log complete workflow
+Requirements:
+Create LangGraph state machine:
+class BaggageWorkflowState(TypedDict):
+    bag_tag: str
+    risk_data: RiskAssessment
+    exception_case: Optional[ExceptionCase]
+    pir_status: Optional[PIRStatus]
+    courier_booking: Optional[CourierBooking]
+    human_approval: Optional[Approval]
+    notifications_sent: List[Notification]
+    workflow_history: List[WorkflowStep]
+Define workflow nodes (agent invocations):
+assess_risk_node: calls Risk Scorer
+create_case_node: calls Case Manager
+check_pir_node: calls WorldTracer
+request_approval_node: human-in-loop
+dispatch_courier_node: calls Courier Dispatch
+notify_passenger_node: calls Passenger Comms
+update_twin_node: updates Neo4j
+Define edges (transitions):
+Conditional edges based on state
+Parallel edges for concurrent execution
+Loop edges for retry logic
+Error edges for exception handling
+Add semantic annotations:
+Why this transition happened (reasoning)
+Confidence in this decision
+Alternative paths considered
+Expected outcome
+Implement workflow engine:
+Executes state machine
+Handles errors gracefully
+Provides rollback on failure
+Logs complete execution trace
+Enables workflow debugging
+Create workflow templates for common scenarios:
+high_risk_bag_workflow
+transfer_coordination_workflow
+irrops_recovery_workflow
+bulk_mishandling_workflow
+delivery_coordination_workflow
+Save to:
+/orchestrator/baggage_orchestrator.py
+/orchestrator/workflow_state.py
+/orchestrator/workflow_nodes.py
+/orchestrator/workflow_edges.py
+/orchestrator/templates/high_risk_workflow.py
+/orchestrator/templates/transfer_workflow.py
+/orchestrator/templates/irrops_workflow.py
+/orchestrator/templates/bulk_workflow.py
+/orchestrator/templates/delivery_workflow.py
+Show me the complete LangGraph orchestrator with all workflow templates.
+---
+
+### Step 4.2: Implement Semantic Memory System
+
+**Claude Code Prompt:**
+TASK 8: Build semantic memory system for agents
+PROBLEM:
+Agents need to remember:
+What they've processed (avoid duplicates)
+What decisions they made (for consistency)
+What patterns they've seen (for learning)
+What worked/failed (for improvement)
+Requirements:
+Create multi-layer memory architecture:
+Layer 1: Working Memory (Redis)
+Current bags being processed
+Active workflows in progress
+Recent decisions (last hour)
+Cache of frequent queries
+Layer 2: Episodic Memory (Neo4j)
+Complete journey of each bag
+All events and decisions
+Agent interactions
+Workflow executions
+Layer 3: Semantic Memory (Vector DB)
+Learned patterns
+Common exception types
+Successful resolution strategies
+Historical context for similar situations
+Implement memory operations:
+class AgentMemory:
+    # Store
+    async def remember(self, event: Event, context: dict)
+
+    # Retrieve
+    async def recall(self, query: str) -> List[Memory]
+    async def find_similar(self, event: Event) -> List[Memory]
+
+    # Learn
+    async def learn_pattern(self, pattern: Pattern)
+    async def update_strategy(self, strategy: Strategy, outcome: Outcome)
+
+    # Forget
+    async def archive_old(self, older_than: timedelta)
+Add semantic search capabilities:
+Find bags with similar characteristics
+Find workflows that handled similar exceptions
+Find strategies that worked in similar contexts
+Find agents that excelled at similar tasks
+Implement context building:
+For each new bag, agents can query:
+"Have we seen bags with similar risk factors?"
+"What happened to similar bags in the past?"
+"What strategies worked for similar exceptions?"
+"Which couriers were reliable for similar deliveries?"
+Create feedback loop:
+Track outcomes of decisions
+Update confidence scores based on success
+Adjust strategies based on results
+Share learnings across agents
+Save to:
+/memory/agent_memory.py
+/memory/working_memory.py (Redis)
+/memory/episodic_memory.py (Neo4j)
+/memory/semantic_memory.py (Vector DB)
+/memory/context_builder.py
+/memory/learning_engine.py
+Show me the complete semantic memory system with all layers and learning capabilities.
+---
+
+## 🎯 PHASE 5: Integration & Testing (45 minutes)
+
+### Step 5.1: Load Complete Knowledge Graph
+
+**Claude Code Prompt:**
+TASK 9: Create ETL pipeline to load complete baggage knowledge graph
+Requirements:
+Extract from Supabase:
+All baggage workflows and dependencies
+All AI enablers and mappings
+All stakeholders and integrations
+All regulatory requirements
+Transform to semantic graph:
+Create nodes with rich properties
+Create relationships with reasoning
+Add confidence scores
+Enrich with context
+Load into Neo4j:
+Use batch operations for performance
+Create constraints and indexes
+Validate graph integrity
+Run consistency checks
+Create migration script that:
+# Initialize graph
+init_schema()
+
+# Load ontology
+load_domains()
+load_subdomains()
+load_workflows()
+load_workflow_dependencies()
+
+# Load agents
+load_agent_types()
+load_agent_capabilities()
+load_agent_collaborations()
+
+# Load integrations
+load_systems()
+load_stakeholders()
+load_regulatory_bodies()
+
+# Create relationships
+link_workflows_to_agents()
+link_workflows_to_systems()
+link_workflows_to_regulations()
+
+# Add semantic enrichment
+calculate_workflow_complexity()
+assess_automation_potential()
+identify_critical_paths()
+
+# Validate
+validate_graph_integrity()
+generate_graph_statistics()
+Create visualization queries:
+Show complete workflow graph
+Show agent collaboration network
+Show system integration map
+Show critical path analysis
+Show automation opportunities
+Save to:
+/scripts/load_knowledge_graph.py
+/scripts/validate_graph.py
+/queries/visualization_queries.cypher
+/queries/analysis_queries.cypher
+Show me the complete ETL pipeline with validation and visualization queries.
+---
+
+### Step 5.2: Implement End-to-End Testing
+
+**Claude Code Prompt:**
+TASK 10: Create comprehensive test suite for baggage system
+Requirements:
+Unit tests for each component:
+Test each agent individually
+Test each mapper/adapter
+Test each workflow template
+Test memory operations
+Integration tests:
+Test agent-to-agent communication
+Test external API interactions
+Test database operations
+Test message queue flows
+Semantic validation tests:
+Test data fusion accuracy
+Test semantic enrichment quality
+Test confidence score calculation
+Test pattern learning
+Workflow tests:
+Test complete workflows end-to-end
+Test error handling and recovery
+Test human-in-loop approval
+Test parallel execution
+Load/performance tests:
+Process 1000 scan events/minute
+Handle 100 concurrent workflows
+Maintain <2s response time
+Ensure 99.9% uptime
+Create test scenarios:
+# Scenario 1: Happy path
+test_normal_bag_journey()
+
+# Scenario 2: Tight connection
+test_tight_mct_detection_and_handling()
+
+# Scenario 3: Mishandled bag
+test_mishandled_bag_recovery_workflow()
+
+# Scenario 4: IRROPS
+test_irrops_bulk_rebooking()
+
+# Scenario 5: Human approval
+test_high_value_courier_approval()
+
+# Scenario 6: Multiple bags
+test_group_booking_coordination()
+
+# Scenario 7: System failure
+test_graceful_degradation()
+
+# Scenario 8: Data conflicts
+test_conflicting_data_resolution()
+Save to:
+/tests/unit/test_agents.py
+/tests/unit/test_mappers.py
+/tests/unit/test_workflows.py
+/tests/integration/test_agent_communication.py
+/tests/integration/test_external_apis.py
+/tests/semantic/test_data_fusion.py
+/tests/semantic/test_enrichment.py
+/tests/workflows/test_happy_path.py
+/tests/workflows/test_exception_handling.py
+/tests/performance/test_load.py
+Show me the complete test suite with all scenarios.
+---
+
+## 🎯 PHASE 6: Documentation & Deployment (30 minutes)
+
+### Step 6.1: Generate Comprehensive Documentation
+
+**Claude Code Prompt:**
+TASK 11: Auto-generate documentation from knowledge graph
+Requirements:
+Extract from Neo4j:
+Complete ontology structure
+All workflows and dependencies
+All agent capabilities
+All integration points
+Generate documentation:
+A. Ontology Reference
+All node types with properties
+All relationship types with semantics
+All constraints and indexes
+Example queries
+B. Agent Reference
+Each agent's purpose and capabilities
+Input/output specifications
+Dependencies and collaborations
+Performance characteristics
+C. Workflow Guide
+Each workflow description
+Step-by-step execution flow
+Decision points and conditions
+Error handling strategies
+D. Integration Guide
+Each external system integration
+API specifications
+Authentication methods
+Data format mappings
+E. API Reference
+All semantic API operations
+Request/response formats
+Error codes and handling
+Rate limits and quotas
+Generate diagrams:
+Ontology class diagram
+Agent collaboration graph
+Workflow state machines
+System integration map
+Data flow diagrams
+Create interactive documentation:
+Searchable knowledge base
+Code examples
+Try-it-out API explorer
+Graph visualizations
+Save to:
+/docs/ontology.md
+/docs/agents.md
+/docs/workflows.md
+/docs/integrations.md
+/docs/api.md
+/docs/diagrams/
+/docs/interactive/
+Show me the documentation generator and sample output.
+---
+
+### Step 6.2: Deploy to Production
+
+**Claude Code Prompt:**
+TASK 12: Create production deployment configuration
+Requirements:
+Docker Compose setup:
+Neo4j cluster (3 nodes for HA)
+Redis cluster
+FastAPI services
+Nginx reverse proxy
+Prometheus + Grafana monitoring
+Kubernetes manifests:
+Agent deployments (with auto-scaling)
+Service meshes (for agent communication)
+Ingress controllers
+Persistent volumes
+Config maps and secrets
+Environment configuration:
+Development
+Staging
+Production (Copa Airlines)
+Multi-tenant support
+Monitoring and alerting:
+Track agent performance
+Monitor API health
+Alert on anomalies
+Dashboard for ops team
+Backup and disaster recovery:
+Neo4j backup strategy
+Redis persistence
+Database snapshots
+Restore procedures
+Security:
+API authentication (OAuth2)
+Encrypted communication (TLS)
+Secret management (Vault)
+Audit logging
+Save to:
+/deploy/docker-compose.yml
+/deploy/k8s/
+/deploy/environments/
+/deploy/monitoring/
+/deploy/backup/
+/deploy/security/
+Show me the complete deployment configuration for production.
+---
+
+## 📊 SUCCESS METRICS
+
+After completing all phases, you should have:
+
+✅ **Ontology**: Comprehensive semantic model in Neo4j  
+✅ **Knowledge Graph**: 8 agents + 7 integrations fully mapped  
+✅ **Semantic Messages**: Standardized communication protocol  
+✅ **Data Fusion**: Unified canonical model  
+✅ **API Gateway**: Frictionless external integrations  
+✅ **Orchestration**: LangGraph workflows for all scenarios  
+✅ **Memory**: Multi-layer semantic memory system  
+✅ **Testing**: Comprehensive test coverage  
+✅ **Documentation**: Auto-generated from graph  
+✅ **Deployment**: Production-ready configuration  
+
+### Friction Elimination Metrics:
+
+**Before:**
+- 8 agents × 7 systems = 56 integration points
+- 5 different data formats
+- Manual data reconciliation
+- Agent coordination via code
+- Average processing: 45 seconds
+
+**After:**
+- 1 semantic gateway (all integrations)
+- 1 canonical data model
+- Automatic data fusion
+- Declarative workflow orchestration
+- Average processing: <2 seconds
+
+**Result: 95% reduction in integration complexity, 22x faster processing**
+
+---
+
+## 🚀 QUICK START SEQUENCE
+
+To execute all phases:
+
+```bash
+# Phase 1: Ontology
+claude-code "Execute Step 1.1 and 1.2"
+
+# Phase 2: Agent Communication  
+claude-code "Execute Step 2.1 and 2.2"
+
+# Phase 3: Data Friction
+claude-code "Execute Step 3.1 and 3.2"
+
+# Phase 4: Orchestration
+claude-code "Execute Step 4.1 and 4.2"
+
+# Phase 5: Integration
+claude-code "Execute Step 5.1 and 5.2"
+
+# Phase 6: Deployment
+claude-code "Execute Step 6.1 and 6.2"
+
+# Verify
+python scripts/validate_complete_system.py
+💡 COPA AIRLINES DEPLOYMENT
+Once complete, Copa Airlines gets:
+Semantic Baggage Platform - understands bag journeys
+8 AI Agents - coordinated via knowledge graph
+Zero Data Friction - automatic format translation
+Zero API Friction - semantic gateway handles everything
+Zero Agent Friction - LangGraph orchestration
+Complete Observability - knowledge graph shows everything
+Production Ready - tested, documented, deployed
+Value Proposition:
+"Copa can't build this internally because it requires:
+Graph database expertise (Neo4j)
+Multi-agent orchestration (LangGraph)
+Semantic modeling skills
+Aviation domain knowledge
+Production AI deployment experience
+Number Labs brings all of this, pre-built and tested."
+📞 SUPPORT
+If you encounter issues at any step:
+Check /docs/troubleshooting.md
+Review graph validation queries
+Inspect agent logs in /logs/
+Test individual components
+Contact: jay@numberlabs.ai
+Let's eliminate ALL friction and build the intelligent baggage system! 🚀
