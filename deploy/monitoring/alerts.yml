@@ -1,0 +1,216 @@
+groups:
+  - name: baggage_ai_alerts
+    interval: 30s
+    rules:
+      # High API Error Rate
+      - alert: HighAPIErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          component: api-gateway
+        annotations:
+          summary: "High API error rate detected"
+          description: "API error rate is {{ $value | humanizePercentage }} (threshold: 5%)"
+
+      # API Response Time High
+      - alert: APIResponseTimeSlow
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 2
+        for: 10m
+        labels:
+          severity: warning
+          component: api-gateway
+        annotations:
+          summary: "API p95 response time is high"
+          description: "p95 response time is {{ $value }}s (threshold: 2s)"
+
+      # High Memory Usage
+      - alert: HighMemoryUsage
+        expr: (container_memory_usage_bytes / container_spec_memory_limit_bytes) > 0.9
+        for: 5m
+        labels:
+          severity: warning
+          component: "{{ $labels.pod }}"
+        annotations:
+          summary: "High memory usage on {{ $labels.pod }}"
+          description: "Memory usage is {{ $value | humanizePercentage }} (threshold: 90%)"
+
+      # High CPU Usage
+      - alert: HighCPUUsage
+        expr: rate(container_cpu_usage_seconds_total[5m]) > 0.8
+        for: 10m
+        labels:
+          severity: warning
+          component: "{{ $labels.pod }}"
+        annotations:
+          summary: "High CPU usage on {{ $labels.pod }}"
+          description: "CPU usage is {{ $value | humanizePercentage }} (threshold: 80%)"
+
+      # Neo4j Down
+      - alert: Neo4jDown
+        expr: up{job="neo4j"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: neo4j
+        annotations:
+          summary: "Neo4j instance is down"
+          description: "Neo4j instance {{ $labels.instance }} has been down for more than 2 minutes"
+
+      # Redis Down
+      - alert: RedisDown
+        expr: up{job="redis"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: redis
+        annotations:
+          summary: "Redis instance is down"
+          description: "Redis instance {{ $labels.instance }} has been down for more than 2 minutes"
+
+      # Pod Restart Frequency
+      - alert: PodRestartingFrequently
+        expr: rate(kube_pod_container_status_restarts_total[15m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          component: "{{ $labels.pod }}"
+        annotations:
+          summary: "Pod {{ $labels.pod }} is restarting frequently"
+          description: "Pod has restarted {{ $value }} times in the last 15 minutes"
+
+      # Workflow Failure Rate
+      - alert: HighWorkflowFailureRate
+        expr: rate(workflow_executions_total{status="failed"}[10m]) / rate(workflow_executions_total[10m]) > 0.1
+        for: 10m
+        labels:
+          severity: critical
+          component: orchestrator
+        annotations:
+          summary: "High workflow failure rate"
+          description: "Workflow failure rate is {{ $value | humanizePercentage }} (threshold: 10%)"
+
+      # Circuit Breaker Open
+      - alert: CircuitBreakerOpen
+        expr: circuit_breaker_state{state="open"} == 1
+        for: 5m
+        labels:
+          severity: warning
+          component: gateway
+        annotations:
+          summary: "Circuit breaker is open for {{ $labels.adapter }}"
+          description: "Circuit breaker for {{ $labels.adapter }} has been open for more than 5 minutes"
+
+      # High Queue Depth
+      - alert: HighQueueDepth
+        expr: message_queue_depth > 1000
+        for: 10m
+        labels:
+          severity: warning
+          component: "{{ $labels.queue }}"
+        annotations:
+          summary: "High queue depth on {{ $labels.queue }}"
+          description: "Queue depth is {{ $value }} (threshold: 1000)"
+
+      # Disk Space Low
+      - alert: DiskSpaceLow
+        expr: (node_filesystem_avail_bytes / node_filesystem_size_bytes) < 0.1
+        for: 10m
+        labels:
+          severity: critical
+          component: infrastructure
+        annotations:
+          summary: "Low disk space on {{ $labels.instance }}"
+          description: "Available disk space is {{ $value | humanizePercentage }} (threshold: 10%)"
+
+      # Rate Limit Breaches
+      - alert: RateLimitBreachesHigh
+        expr: rate(rate_limit_exceeded_total[5m]) > 10
+        for: 5m
+        labels:
+          severity: info
+          component: gateway
+        annotations:
+          summary: "High rate limit breach rate"
+          description: "Rate limit is being exceeded {{ $value }} times per second"
+
+      # Agent Processing Lag
+      - alert: AgentProcessingLag
+        expr: agent_message_lag_seconds > 60
+        for: 10m
+        labels:
+          severity: warning
+          component: "{{ $labels.agent }}"
+        annotations:
+          summary: "Agent {{ $labels.agent }} has high processing lag"
+          description: "Processing lag is {{ $value }}s (threshold: 60s)"
+
+      # Data Fusion Conflicts High
+      - alert: HighDataFusionConflicts
+        expr: rate(data_fusion_conflicts_total[10m]) > 0.05
+        for: 10m
+        labels:
+          severity: info
+          component: data-fusion
+        annotations:
+          summary: "High data fusion conflict rate"
+          description: "Conflict rate is {{ $value | humanizePercentage }} (threshold: 5%)"
+
+      # SLA Violation
+      - alert: SLAViolation
+        expr: rate(http_request_duration_seconds_bucket{le="2"}[5m]) < 0.95
+        for: 10m
+        labels:
+          severity: critical
+          component: api-gateway
+        annotations:
+          summary: "SLA violation: <95% requests under 2s"
+          description: "Only {{ $value | humanizePercentage }} of requests completed within 2s SLA"
+
+  - name: copa_airlines_business_alerts
+    interval: 60s
+    rules:
+      # Mishandled Bag Rate High
+      - alert: MishandledBagRateHigh
+        expr: rate(bags_mishandled_total[1h]) / rate(bags_processed_total[1h]) > 0.01
+        for: 30m
+        labels:
+          severity: critical
+          tenant: copa-airlines
+          business_impact: high
+        annotations:
+          summary: "Mishandled bag rate exceeds 1%"
+          description: "Mishandled bag rate is {{ $value | humanizePercentage }} over the last hour"
+
+      # PIR Creation Delays
+      - alert: PIRCreationDelayed
+        expr: pir_creation_duration_seconds > 300
+        for: 15m
+        labels:
+          severity: warning
+          tenant: copa-airlines
+        annotations:
+          summary: "PIR creation is taking longer than 5 minutes"
+          description: "Average PIR creation time is {{ $value }}s"
+
+      # Courier Booking Failures
+      - alert: CourierBookingFailuresHigh
+        expr: rate(courier_bookings_failed_total[30m]) / rate(courier_bookings_total[30m]) > 0.1
+        for: 30m
+        labels:
+          severity: warning
+          tenant: copa-airlines
+        annotations:
+          summary: "High courier booking failure rate"
+          description: "Failure rate is {{ $value | humanizePercentage }} (threshold: 10%)"
+
+      # Passenger Notification Failures
+      - alert: PassengerNotificationFailures
+        expr: rate(notifications_failed_total[15m]) / rate(notifications_sent_total[15m]) > 0.05
+        for: 15m
+        labels:
+          severity: warning
+          tenant: copa-airlines
+        annotations:
+          summary: "High notification failure rate"
+          description: "Notification failure rate is {{ $value | humanizePercentage }} (threshold: 5%)"

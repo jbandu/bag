@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: baggage-ai
+  labels:
+    name: baggage-ai
+    environment: production
+    tenant: copa-airlines

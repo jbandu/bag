@@ -1,0 +1,180 @@
+# HashiCorp Vault Integration for Secret Management
+# Baggage AI Production Deployment
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: baggage-ai-vault
+  namespace: baggage-ai
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vault-config
+  namespace: baggage-ai
+data:
+  vault_addr: "https://vault.copaair.com:8200"
+  vault_namespace: "baggage-ai"
+
+  # Authentication method
+  auth_method: "kubernetes"
+  auth_path: "auth/kubernetes"
+  role: "baggage-ai-production"
+
+  # Secret paths
+  database_path: "secret/data/baggage-ai/database"
+  api_keys_path: "secret/data/baggage-ai/api-keys"
+  tls_path: "secret/data/baggage-ai/tls"
+  oauth2_path: "secret/data/baggage-ai/oauth2"
+
+  # Secret rotation
+  secret_rotation_enabled: "true"
+  rotation_check_interval: "3600"  # 1 hour
+
+  # Lease management
+  renew_increment: "3600"
+  renew_buffer: "300"
+
+  # Retry configuration
+  max_retries: "3"
+  retry_wait_min: "1"
+  retry_wait_max: "10"
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: vault-secret-sync
+  namespace: baggage-ai
+spec:
+  schedule: "0 */6 * * *"  # Every 6 hours
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: baggage-ai-vault
+          containers:
+          - name: vault-sync
+            image: vault:1.14
+            env:
+            - name: VAULT_ADDR
+              valueFrom:
+                configMapKeyRef:
+                  name: vault-config
+                  key: vault_addr
+            - name: VAULT_NAMESPACE
+              valueFrom:
+                configMapKeyRef:
+                  name: vault-config
+                  key: vault_namespace
+            command:
+            - /bin/sh
+            - -c
+            - |
+              # Authenticate with Vault using Kubernetes auth
+              vault login -method=kubernetes role=baggage-ai-production
+
+              # Sync Neo4j credentials
+              vault kv get -field=username secret/baggage-ai/database/neo4j > /k8s/secrets/neo4j-username
+              vault kv get -field=password secret/baggage-ai/database/neo4j > /k8s/secrets/neo4j-password
+
+              # Sync Redis credentials
+              vault kv get -field=password secret/baggage-ai/database/redis > /k8s/secrets/redis-password
+
+              # Sync API keys
+              vault kv get -field=worldtracer secret/baggage-ai/api-keys > /k8s/secrets/worldtracer-key
+              vault kv get -field=dcs secret/baggage-ai/api-keys > /k8s/secrets/dcs-key
+              vault kv get -field=courier secret/baggage-ai/api-keys > /k8s/secrets/courier-key
+
+              # Sync TLS certificates
+              vault kv get -field=cert secret/baggage-ai/tls > /k8s/secrets/tls-cert
+              vault kv get -field=key secret/baggage-ai/tls > /k8s/secrets/tls-key
+
+              # Create/update Kubernetes secrets
+              kubectl create secret generic neo4j-credentials \
+                --from-file=username=/k8s/secrets/neo4j-username \
+                --from-file=password=/k8s/secrets/neo4j-password \
+                --namespace=baggage-ai \
+                --dry-run=client -o yaml | kubectl apply -f -
+
+              kubectl create secret generic redis-credentials \
+                --from-file=password=/k8s/secrets/redis-password \
+                --namespace=baggage-ai \
+                --dry-run=client -o yaml | kubectl apply -f -
+
+              kubectl create secret generic api-keys \
+                --from-file=worldtracer=/k8s/secrets/worldtracer-key \
+                --from-file=dcs=/k8s/secrets/dcs-key \
+                --from-file=courier=/k8s/secrets/courier-key \
+                --namespace=baggage-ai \
+                --dry-run=client -o yaml | kubectl apply -f -
+
+              kubectl create secret tls tls-certificate \
+                --cert=/k8s/secrets/tls-cert \
+                --key=/k8s/secrets/tls-key \
+                --namespace=baggage-ai \
+                --dry-run=client -o yaml | kubectl apply -f -
+
+              echo "Secret sync completed successfully"
+            volumeMounts:
+            - name: k8s-secrets
+              mountPath: /k8s/secrets
+          volumes:
+          - name: k8s-secrets
+            emptyDir:
+              medium: Memory
+          restartPolicy: OnFailure
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vault-policies
+  namespace: baggage-ai
+data:
+  baggage-ai-policy.hcl: |
+    # Baggage AI Vault Policy
+    # Defines what secrets the application can access
+
+    # Database credentials - read only
+    path "secret/data/baggage-ai/database/*" {
+      capabilities = ["read", "list"]
+    }
+
+    # API keys - read only
+    path "secret/data/baggage-ai/api-keys" {
+      capabilities = ["read"]
+    }
+
+    # TLS certificates - read only
+    path "secret/data/baggage-ai/tls" {
+      capabilities = ["read"]
+    }
+
+    # OAuth2 credentials - read only
+    path "secret/data/baggage-ai/oauth2" {
+      capabilities = ["read"]
+    }
+
+    # Dynamic database credentials
+    path "database/creds/baggage-ai-role" {
+      capabilities = ["read"]
+    }
+
+    # Transit encryption
+    path "transit/encrypt/baggage-ai" {
+      capabilities = ["update"]
+    }
+
+    path "transit/decrypt/baggage-ai" {
+      capabilities = ["update"]
+    }
+
+    # Token renewal
+    path "auth/token/renew-self" {
+      capabilities = ["update"]
+    }
+
+    # Deny everything else
+    path "*" {
+      capabilities = ["deny"]
+    }

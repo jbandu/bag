@@ -1,0 +1,66 @@
+# OAuth2 / OpenID Connect Configuration
+# For Copa Airlines Production Environment
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: oauth2-config
+  namespace: baggage-ai
+data:
+  issuer: "https://auth.copaair.com"
+  audience: "baggage-ai-api"
+  jwks_url: "https://auth.copaair.com/.well-known/jwks.json"
+  token_endpoint: "https://auth.copaair.com/oauth/token"
+  authorization_endpoint: "https://auth.copaair.com/oauth/authorize"
+  userinfo_endpoint: "https://auth.copaair.com/userinfo"
+
+  # Token validation
+  validate_issuer: "true"
+  validate_audience: "true"
+  validate_expiration: "true"
+  validate_not_before: "true"
+
+  # Token lifetime
+  access_token_lifetime: "3600"  # 1 hour
+  refresh_token_lifetime: "86400"  # 24 hours
+
+  # Scopes
+  default_scopes: "baggage:read baggage:write"
+  admin_scopes: "baggage:read baggage:write baggage:admin"
+  readonly_scopes: "baggage:read"
+
+  # Role-based access control
+  roles: |
+    {
+      "ops_agent": {
+        "scopes": ["baggage:read", "baggage:write"],
+        "permissions": ["scan:process", "case:create", "pir:create", "notification:send"]
+      },
+      "ops_supervisor": {
+        "scopes": ["baggage:read", "baggage:write", "baggage:admin"],
+        "permissions": ["*"]
+      },
+      "readonly_user": {
+        "scopes": ["baggage:read"],
+        "permissions": ["bag:view", "case:view", "pir:view"]
+      },
+      "system_api": {
+        "scopes": ["baggage:read", "baggage:write"],
+        "permissions": ["scan:process", "data:fuse", "semantic:enrich"]
+      }
+    }
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: oauth2-secrets
+  namespace: baggage-ai
+type: Opaque
+stringData:
+  client_id: "${OAUTH2_CLIENT_ID_FROM_VAULT}"
+  client_secret: "${OAUTH2_CLIENT_SECRET_FROM_VAULT}"
+  jwt_secret_key: "${JWT_SECRET_KEY_FROM_VAULT}"
+
+  # Service account credentials (for system-to-system)
+  service_account_client_id: "baggage-ai-service"
+  service_account_client_secret: "${SERVICE_ACCOUNT_SECRET_FROM_VAULT}"
