@@ -1,0 +1,225 @@
+# Audit Logging Configuration
+# Comprehensive audit trail for compliance and security
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: audit-config
+  namespace: baggage-ai
+data:
+  audit_enabled: "true"
+  audit_log_level: "info"
+  audit_log_format: "json"
+
+  # What to audit
+  audit_events: |
+    {
+      "authentication": {
+        "login_attempts": true,
+        "login_failures": true,
+        "logout_events": true,
+        "token_generation": true,
+        "token_validation": true
+      },
+      "authorization": {
+        "access_granted": true,
+        "access_denied": true,
+        "permission_changes": true,
+        "role_assignments": true
+      },
+      "data_access": {
+        "bag_data_read": true,
+        "bag_data_write": true,
+        "passenger_data_read": true,
+        "pii_access": true,
+        "bulk_operations": true
+      },
+      "workflow_operations": {
+        "workflow_started": true,
+        "workflow_completed": true,
+        "workflow_failed": true,
+        "human_approval_requested": true,
+        "human_approval_granted": true,
+        "human_approval_denied": true
+      },
+      "system_operations": {
+        "config_changes": true,
+        "secret_access": true,
+        "backup_created": true,
+        "restore_initiated": true,
+        "database_operations": true
+      },
+      "external_api": {
+        "worldtracer_calls": true,
+        "dcs_calls": true,
+        "courier_bookings": true,
+        "notifications_sent": true
+      }
+    }
+
+  # PII fields to mask in logs
+  pii_fields: "passenger_name,phone,email,address,passport_number,credit_card"
+
+  # Retention policy
+  audit_log_retention_days: "365"
+  compliance_mode: "gdpr"  # gdpr, hipaa, pci-dss
+
+  # Output destinations
+  log_destinations: "file,elasticsearch,siem"
+
+  # Elasticsearch configuration
+  elasticsearch_url: "https://elasticsearch.copaair.com:9200"
+  elasticsearch_index: "baggage-ai-audit"
+
+  # SIEM configuration
+  siem_url: "https://siem.copaair.com/api/events"
+  siem_api_key_secret: "siem-credentials"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluentd-config
+  namespace: baggage-ai
+data:
+  fluent.conf: |
+    # Collect audit logs from all pods
+    <source>
+      @type tail
+      path /var/log/containers/*baggage-ai*.log
+      pos_file /var/log/fluentd-containers.log.pos
+      tag kubernetes.*
+      read_from_head true
+      <parse>
+        @type json
+        time_format %Y-%m-%dT%H:%M:%S.%NZ
+      </parse>
+    </source>
+
+    # Filter audit events
+    <filter kubernetes.**>
+      @type grep
+      <regexp>
+        key log
+        pattern /audit_event/
+      </regexp>
+    </filter>
+
+    # Parse audit events
+    <filter kubernetes.**>
+      @type parser
+      key_name log
+      reserve_data true
+      <parse>
+        @type json
+      </parse>
+    </filter>
+
+    # Add Kubernetes metadata
+    <filter kubernetes.**>
+      @type kubernetes_metadata
+      @id filter_kube_metadata
+      kubernetes_url "#{ENV['FLUENT_FILTER_KUBERNETES_URL'] || 'https://' + ENV.fetch('KUBERNETES_SERVICE_HOST') + ':' + ENV.fetch('KUBERNETES_SERVICE_PORT') + '/api'}"
+      verify_ssl "#{ENV['KUBERNETES_VERIFY_SSL'] || true}"
+      ca_file "#{ENV['KUBERNETES_CA_FILE']}"
+    </filter>
+
+    # Mask PII
+    <filter kubernetes.**>
+      @type record_modifier
+      <record>
+        passenger_name ${record['passenger_name'] ? '***MASKED***' : record['passenger_name']}
+        phone ${record['phone'] ? '***MASKED***' : record['phone']}
+        email ${record['email'] ? '***MASKED***' : record['email']}
+      </record>
+    </filter>
+
+    # Output to Elasticsearch
+    <match kubernetes.**>
+      @type elasticsearch
+      host elasticsearch.copaair.com
+      port 9200
+      scheme https
+      ssl_verify true
+      logstash_format true
+      logstash_prefix baggage-ai-audit
+      index_name baggage-ai-audit
+      type_name _doc
+      include_tag_key true
+      tag_key @log_name
+      <buffer>
+        @type file
+        path /var/log/fluentd-buffers/kubernetes.system.buffer
+        flush_mode interval
+        retry_type exponential_backoff
+        flush_thread_count 2
+        flush_interval 5s
+        retry_forever false
+        retry_max_interval 30
+        chunk_limit_size 2M
+        queue_limit_length 8
+        overflow_action block
+      </buffer>
+    </match>
+
+    # Output to SIEM
+    <match kubernetes.**>
+      @type http
+      endpoint https://siem.copaair.com/api/events
+      headers {"Authorization":"Bearer ${SIEM_API_KEY}"}
+      <format>
+        @type json
+      </format>
+      <buffer>
+        flush_interval 10s
+      </buffer>
+    </match>
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fluentd-audit
+  namespace: baggage-ai
+spec:
+  selector:
+    matchLabels:
+      app: fluentd-audit
+  template:
+    metadata:
+      labels:
+        app: fluentd-audit
+    spec:
+      serviceAccountName: fluentd
+      containers:
+      - name: fluentd
+        image: fluent/fluentd-kubernetes-daemonset:v1-debian-elasticsearch
+        env:
+        - name: FLUENT_ELASTICSEARCH_HOST
+          value: "elasticsearch.copaair.com"
+        - name: FLUENT_ELASTICSEARCH_PORT
+          value: "9200"
+        - name: FLUENT_ELASTICSEARCH_SCHEME
+          value: "https"
+        - name: SIEM_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: siem-credentials
+              key: api_key
+        volumeMounts:
+        - name: varlog
+          mountPath: /var/log
+        - name: varlibdockercontainers
+          mountPath: /var/lib/docker/containers
+          readOnly: true
+        - name: fluentd-config
+          mountPath: /fluentd/etc/fluent.conf
+          subPath: fluent.conf
+      volumes:
+      - name: varlog
+        hostPath:
+          path: /var/log
+      - name: varlibdockercontainers
+        hostPath:
+          path: /var/lib/docker/containers
+      - name: fluentd-config
+        configMap:
+          name: fluentd-config

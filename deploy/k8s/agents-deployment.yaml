@@ -1,0 +1,186 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-scan-processor
+  namespace: baggage-ai
+  labels:
+    app: agent-scan-processor
+    component: agent
+    agent-type: scan-processor
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: agent-scan-processor
+  template:
+    metadata:
+      labels:
+        app: agent-scan-processor
+        component: agent
+        agent-type: scan-processor
+    spec:
+      containers:
+      - name: agent
+        image: baggage-ai/agent:1.0.0
+        env:
+        - name: AGENT_NAME
+          value: "scan_processor"
+        - name: REDIS_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: baggage-config
+              key: redis_host
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "2Gi"
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: agent-scan-processor-hpa
+  namespace: baggage-ai
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: agent-scan-processor
+  minReplicas: 5
+  maxReplicas: 50
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Pods
+    pods:
+      metric:
+        name: messages_per_second
+      target:
+        type: AverageValue
+        averageValue: "100"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-risk-scorer
+  namespace: baggage-ai
+  labels:
+    app: agent-risk-scorer
+    component: agent
+    agent-type: risk-scorer
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: agent-risk-scorer
+  template:
+    metadata:
+      labels:
+        app: agent-risk-scorer
+        component: agent
+        agent-type: risk-scorer
+    spec:
+      containers:
+      - name: agent
+        image: baggage-ai/agent:1.0.0
+        env:
+        - name: AGENT_NAME
+          value: "risk_scorer"
+        - name: REDIS_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: baggage-config
+              key: redis_host
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "2Gi"
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: agent-risk-scorer-hpa
+  namespace: baggage-ai
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: agent-risk-scorer
+  minReplicas: 3
+  maxReplicas: 30
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-case-manager
+  namespace: baggage-ai
+  labels:
+    app: agent-case-manager
+    component: agent
+    agent-type: case-manager
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: agent-case-manager
+  template:
+    metadata:
+      labels:
+        app: agent-case-manager
+        component: agent
+        agent-type: case-manager
+    spec:
+      containers:
+      - name: agent
+        image: baggage-ai/agent:1.0.0
+        env:
+        - name: AGENT_NAME
+          value: "case_manager"
+        - name: REDIS_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: baggage-config
+              key: redis_host
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "2Gi"
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: agent-case-manager-hpa
+  namespace: baggage-ai
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: agent-case-manager
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70

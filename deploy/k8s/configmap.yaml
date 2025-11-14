@@ -1,0 +1,98 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: baggage-config
+  namespace: baggage-ai
+data:
+  # Neo4j Configuration
+  neo4j_uri: "bolt://neo4j-cluster:7687"
+  neo4j_database: "baggage"
+
+  # Redis Configuration
+  redis_host: "redis-cluster"
+  redis_port: "6379"
+  redis_db: "0"
+
+  # Application Configuration
+  log_level: "INFO"
+  workers: "4"
+  environment: "production"
+  tenant: "copa-airlines"
+
+  # Performance Configuration
+  max_connections: "100"
+  connection_timeout: "30"
+  request_timeout: "60"
+
+  # Rate Limiting
+  rate_limit_per_minute: "1000"
+  burst_size: "100"
+
+  # Circuit Breaker
+  failure_threshold: "5"
+  recovery_timeout: "60"
+  half_open_requests: "3"
+
+  # Cache Configuration
+  cache_ttl_seconds: "300"
+  cache_max_size_mb: "1024"
+
+  # Feature Flags
+  enable_semantic_enrichment: "true"
+  enable_data_fusion: "true"
+  enable_auto_pir_creation: "true"
+  enable_courier_booking: "true"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: baggage-ai
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+      external_labels:
+        cluster: 'baggage-ai-production'
+        tenant: 'copa-airlines'
+
+    alerting:
+      alertmanagers:
+      - static_configs:
+        - targets:
+          - alertmanager:9093
+
+    rule_files:
+      - '/etc/prometheus/alerts.yml'
+
+    scrape_configs:
+      - job_name: 'kubernetes-pods'
+        kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            names:
+            - baggage-ai
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+          action: keep
+          regex: true
+        - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+          action: replace
+          target_label: __metrics_path__
+          regex: (.+)
+        - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+          action: replace
+          regex: ([^:]+)(?::\d+)?;(\d+)
+          replacement: $1:$2
+          target_label: __address__
+
+      - job_name: 'neo4j'
+        static_configs:
+        - targets:
+          - neo4j-cluster:2004
+
+      - job_name: 'redis'
+        static_configs:
+        - targets:
+          - redis-exporter:9121
