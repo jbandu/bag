@@ -17,6 +17,7 @@ To use this version:
 4. Replace api_server.py with this file, or rename and update imports
 """
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
@@ -56,7 +57,10 @@ from app.external import ExternalServicesManager
 
 # Orchestrator façade (new unified system)
 from app.orchestrator import initialize_orchestrator, get_orchestrator
-from app.dependencies import get_orchestrator as get_orchestrator_dependency
+from app.dependencies import (
+    get_orchestrator as get_orchestrator_dependency,
+    get_health_checker_dependency
+)
 
 # Global database manager instances
 postgres_manager = None
@@ -191,6 +195,141 @@ async def root():
         ],
         "powered_by": "Claude Sonnet 4 + LangGraph"
     }
+
+
+# ============================================================================
+# HEALTH CHECK ENDPOINTS (Public)
+# ============================================================================
+
+@app.get("/health")
+async def health_check(
+    health_checker: DatabaseHealthChecker = Depends(get_health_checker_dependency)
+):
+    """
+    Overall system health check
+
+    Returns health status for all services:
+    - PostgreSQL (Neon)
+    - Neo4j (Aura) - Digital Twin
+    - Redis (Upstash) - Cache
+    """
+    if not health_checker:
+        return {
+            "status": "unhealthy",
+            "healthy": False,
+            "error": "Health checker not initialized",
+            "services": {}
+        }
+
+    result = await health_checker.check_all()
+    return result
+
+
+@app.get("/health/ready")
+async def readiness_check(
+    health_checker: DatabaseHealthChecker = Depends(get_health_checker_dependency)
+):
+    """
+    Kubernetes readiness probe
+
+    Returns 200 if PostgreSQL + Neo4j are healthy (ready to serve traffic)
+    Returns 503 if core services are down
+    """
+    if not health_checker:
+        return JSONResponse(
+            status_code=503,
+            content={"ready": False, "reason": "Health checker not initialized"}
+        )
+
+    is_ready = await health_checker.is_ready()
+
+    if is_ready:
+        return {"ready": True, "status": "ready to serve traffic"}
+    else:
+        return JSONResponse(
+            status_code=503,
+            content={"ready": False, "reason": "Core services (PostgreSQL/Neo4j) unavailable"}
+        )
+
+
+@app.get("/health/live")
+async def liveness_check(
+    health_checker: DatabaseHealthChecker = Depends(get_health_checker_dependency)
+):
+    """
+    Kubernetes liveness probe
+
+    Returns 200 if PostgreSQL is responsive (application is alive)
+    Returns 503 if PostgreSQL is down (restart container)
+    """
+    if not health_checker:
+        return JSONResponse(
+            status_code=503,
+            content={"alive": False, "reason": "Health checker not initialized"}
+        )
+
+    is_alive = await health_checker.is_alive()
+
+    if is_alive:
+        return {"alive": True, "status": "application is alive"}
+    else:
+        return JSONResponse(
+            status_code=503,
+            content={"alive": False, "reason": "PostgreSQL unresponsive - restart required"}
+        )
+
+
+@app.get("/health/database")
+async def database_health_check(
+    health_checker: DatabaseHealthChecker = Depends(get_health_checker_dependency)
+):
+    """PostgreSQL health check"""
+    if not health_checker:
+        return {"status": "unhealthy", "error": "Health checker not initialized"}
+
+    result = await health_checker.check_postgres_only()
+    return result
+
+
+@app.get("/health/graph")
+async def graph_health_check(
+    health_checker: DatabaseHealthChecker = Depends(get_health_checker_dependency)
+):
+    """Neo4j graph database health check"""
+    if not health_checker:
+        return {"status": "unhealthy", "error": "Health checker not initialized"}
+
+    result = await health_checker.check_neo4j_only()
+    return result
+
+
+@app.get("/health/cache")
+async def cache_health_check(
+    health_checker: DatabaseHealthChecker = Depends(get_health_checker_dependency)
+):
+    """Redis cache health check"""
+    if not health_checker:
+        return {"status": "unhealthy", "error": "Health checker not initialized"}
+
+    result = await health_checker.check_redis_only()
+    return result
+
+
+@app.get("/health/external")
+async def external_services_health_check():
+    """External services health check (WorldTracer, Twilio, SendGrid)"""
+    if not external_services_manager:
+        return {
+            "status": "unavailable",
+            "services": {
+                "worldtracer": {"status": "not_initialized"},
+                "twilio": {"status": "not_initialized"},
+                "sendgrid": {"status": "not_initialized"}
+            }
+        }
+
+    health = await external_services_manager.check_health()
+    return health
 
 
 # Metrics endpoint (authenticated)
@@ -611,56 +750,30 @@ async def startup_event():
     logger.info(f"Environment: {settings.environment}")
     logger.info(f"API Port: {settings.api_port}")
 
-    # Initialize production database managers
-    logger.info("Initializing database connections...")
+    # Initialize production database managers using factory pattern
+    logger.info("Initializing database connections (using factory)...")
 
-    # PostgreSQL (Neon)
-    if settings.neon_database_url:
-        try:
-            postgres_manager = PostgresManager(
-                database_url=settings.neon_database_url,
-                min_connections=2,
-                max_connections=20
-            )
-            await postgres_manager.connect()
-            logger.info("✅ PostgreSQL connected")
-        except Exception as e:
-            logger.error(f"❌ PostgreSQL connection failed: {e}")
-            # Continue without PostgreSQL - allow graceful degradation
+    from app.database.factory import initialize_databases, get_health_checker
 
-    # Neo4j (Aura)
     try:
-        neo4j_manager = Neo4jManager(
-            uri=settings.neo4j_uri,
-            user=settings.neo4j_user,
-            password=settings.neo4j_password
-        )
-        await neo4j_manager.connect()
-        logger.info("✅ Neo4j connected")
-    except Exception as e:
-        logger.error(f"❌ Neo4j connection failed: {e}")
-        # Continue without Neo4j - allow graceful degradation
+        # Initialize all databases in parallel with retry logic
+        db_status = await initialize_databases()
 
-    # Redis (Upstash/Railway)
-    try:
-        redis_manager = RedisManager(redis_url=settings.redis_url)
-        await redis_manager.connect()
-        logger.info("✅ Redis connected")
-    except Exception as e:
-        logger.error(f"❌ Redis connection failed: {e}")
-        # Continue without Redis - allow graceful degradation
+        # Get references to managers for legacy code compatibility
+        from app.database.factory import get_postgres, get_neo4j, get_redis
+        postgres_manager = get_postgres()
+        neo4j_manager = get_neo4j()
+        redis_manager = get_redis()
+        health_checker = get_health_checker()
 
-    # Initialize health checker
-    if postgres_manager and neo4j_manager and redis_manager:
-        health_checker = DatabaseHealthChecker(
-            postgres=postgres_manager,
-            neo4j=neo4j_manager,
-            redis=redis_manager
-        )
-        init_health_checker(health_checker)
-        logger.info("✅ Health check system initialized")
-    else:
-        logger.warning("⚠️ Health check system not fully initialized - some databases unavailable")
+        # Initialize health checker for legacy auth module
+        if health_checker:
+            init_health_checker(health_checker)
+            logger.info("✅ Health check system initialized")
+
+    except Exception as e:
+        logger.error(f"❌ Database initialization failed: {e}")
+        logger.warning("⚠️ Continuing with degraded functionality")
 
     # Initialize authentication database (uses same PostgreSQL connection)
     if settings.neon_database_url:
@@ -748,27 +861,12 @@ async def shutdown_event():
     logger.info("BAGGAGE OPERATIONS API SHUTTING DOWN")
     logger.info("=" * 60)
 
-    # Close database connections
-    if postgres_manager:
-        try:
-            await postgres_manager.disconnect()
-            logger.info("✅ PostgreSQL disconnected")
-        except Exception as e:
-            logger.error(f"Error disconnecting PostgreSQL: {e}")
-
-    if neo4j_manager:
-        try:
-            await neo4j_manager.disconnect()
-            logger.info("✅ Neo4j disconnected")
-        except Exception as e:
-            logger.error(f"Error disconnecting Neo4j: {e}")
-
-    if redis_manager:
-        try:
-            await redis_manager.disconnect()
-            logger.info("✅ Redis disconnected")
-        except Exception as e:
-            logger.error(f"Error disconnecting Redis: {e}")
+    # Close database connections using factory pattern
+    try:
+        from app.database.factory import shutdown_databases
+        await shutdown_databases()
+    except Exception as e:
+        logger.error(f"Error shutting down databases: {e}")
 
     # Disconnect external services
     if external_services_manager:
