@@ -24,7 +24,8 @@ from datetime import datetime
 from loguru import logger
 import sys
 
-from config.settings import settings
+# Configuration (new layered system)
+from config import config as settings
 
 # Authentication imports
 from app.auth import (
@@ -53,9 +54,9 @@ from app.api import health_router, init_health_checker, init_external_services
 # External services imports
 from app.external import ExternalServicesManager
 
-# Lazy imports for orchestrator and redis (only load when needed)
-orchestrator = None
-redis_cache = None
+# Orchestrator façade (new unified system)
+from app.orchestrator import initialize_orchestrator, get_orchestrator
+from app.dependencies import get_orchestrator as get_orchestrator_dependency
 
 # Global database manager instances
 postgres_manager = None
@@ -66,21 +67,11 @@ health_checker = None
 # Global external services manager
 external_services_manager = None
 
-def get_orchestrator():
-    """Lazy load orchestrator only when needed"""
-    global orchestrator
-    if orchestrator is None:
-        try:
-            from orchestrator.baggage_orchestrator import orchestrator as orch
-            orchestrator = orch
-            logger.info("✅ Orchestrator loaded successfully")
-        except Exception as e:
-            logger.error(f"❌ Failed to load orchestrator: {e}")
-            raise HTTPException(status_code=503, detail="AI processing unavailable - orchestrator failed to load")
-    return orchestrator
+# Legacy redis cache (for backward compatibility)
+redis_cache = None
 
 def get_redis():
-    """Lazy load redis only when needed"""
+    """Get redis cache (legacy support)"""
     global redis_cache
     if redis_cache is None:
         try:
@@ -238,7 +229,8 @@ async def process_scan_event(
     scan_request: ScanEventRequest,
     background_tasks: BackgroundTasks,
     auth: CurrentUser | CurrentAPIKey = Depends(require_ops_or_admin),
-    airline: CurrentAirline = Depends(get_current_airline)
+    airline: CurrentAirline = Depends(get_current_airline),
+    orchestrator = Depends(get_orchestrator_dependency)
 ):
     """
     Process baggage scan event (authenticated)
@@ -254,11 +246,12 @@ async def process_scan_event(
     try:
         logger.info(f"Received scan event from {scan_request.source} (airline: {airline.code})")
 
-        # Lazy load orchestrator when needed
-        orch = get_orchestrator()
+        # Prepare scan data for orchestrator
+        scan_data = scan_request.dict()
+        scan_data['airline_id'] = airline.id
 
-        # Process asynchronously in background
-        result = await orch.process_baggage_event(scan_request.raw_scan)
+        # Process using new orchestrator façade
+        result = await orchestrator.process_scan(scan_data)
 
         # Audit log
         await create_audit_log_entry(
@@ -266,15 +259,13 @@ async def process_scan_event(
             auth=auth,
             action="process_scan_event",
             resource="scan_event",
-            status="success",
+            status="success" if result.get('success') else "failure",
             response_status=200
         )
 
         return {
-            "status": "success",
-            "message": "Scan event processed",
+            **result,
             "airline": airline.code,
-            "result": result,
             "received_at": datetime.utcnow().isoformat()
         }
 
@@ -298,7 +289,8 @@ async def process_type_b_message(
     type_b_request: TypeBMessageRequest,
     background_tasks: BackgroundTasks,
     auth: CurrentUser | CurrentAPIKey = Depends(require_ops_or_admin),
-    airline: CurrentAirline = Depends(get_current_airline)
+    airline: CurrentAirline = Depends(get_current_airline),
+    orchestrator = Depends(get_orchestrator_dependency)
 ):
     """
     Process SITA Type B message (authenticated)
@@ -313,11 +305,8 @@ async def process_type_b_message(
     try:
         logger.info(f"Received Type B {type_b_request.message_type} from {type_b_request.from_station} (airline: {airline.code})")
 
-        # Lazy load orchestrator when needed
-        orch = get_orchestrator()
-
-        # Process as scan event
-        result = await orch.process_baggage_event(type_b_request.message)
+        # Process using new orchestrator façade
+        result = await orchestrator.process_type_b(type_b_request.message)
 
         # Audit log
         await create_audit_log_entry(
@@ -325,15 +314,14 @@ async def process_type_b_message(
             auth=auth,
             action="process_type_b",
             resource="type_b_message",
-            status="success",
+            status="success" if result.get('success') else "failure",
             response_status=200
         )
 
         return {
-            "status": "success",
-            "message": f"Type B {type_b_request.message_type} processed",
+            **result,
             "airline": airline.code,
-            "result": result,
+            "message_type": type_b_request.message_type,
             "received_at": datetime.utcnow().isoformat()
         }
 
@@ -740,6 +728,15 @@ async def startup_event():
     except Exception as e:
         logger.error(f"❌ External services initialization failed: {e}")
         logger.warning("⚠️ Continuing without external services")
+
+    # Initialize orchestrator façade (new unified system)
+    logger.info("Initializing orchestrator...")
+    try:
+        await initialize_orchestrator()
+        logger.info("✅ Orchestrator initialized")
+    except Exception as e:
+        logger.error(f"❌ Orchestrator initialization failed: {e}")
+        logger.warning("⚠️ Continuing without orchestrator (API will return errors)")
 
     logger.info("=" * 60)
 
