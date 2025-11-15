@@ -10,6 +10,10 @@ class Settings(BaseSettings):
 
     model_config = {"extra": "ignore", "protected_namespaces": ("settings_",)}
 
+    # Security Configuration
+    jwt_secret: str
+    secret_key: str
+
     # AI Model Configuration
     anthropic_api_key: str
     model_name: str = "claude-sonnet-4-20250514"
