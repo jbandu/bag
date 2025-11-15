@@ -1,0 +1,431 @@
+name: Nightly E2E Tests
+
+on:
+  schedule:
+    # Run every night at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:  # Allow manual triggering
+    inputs:
+      railway_url:
+        description: 'Railway deployment URL (optional override)'
+        required: false
+        type: string
+
+env:
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  # ===========================================================================
+  # E2E TESTS AGAINST RAILWAY DEPLOYMENT
+  # ===========================================================================
+
+  e2e-smoke-tests:
+    name: E2E Smoke Tests (Railway)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest pytest-asyncio httpx python-dotenv
+
+    - name: Run smoke tests
+      env:
+        RAILWAY_URL: ${{ inputs.railway_url || secrets.RAILWAY_URL }}
+        API_KEY: ${{ secrets.RAILWAY_API_KEY }}
+      run: |
+        pytest tests/e2e/test_railway_deployment.py::TestSmoke \
+          -v \
+          --tb=short \
+          -m "smoke" \
+          --junitxml=junit/e2e-smoke-results.xml
+
+    - name: Upload smoke test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: e2e-smoke-results
+        path: junit/e2e-smoke-results.xml
+
+  e2e-health-tests:
+    name: E2E Health & Readiness Tests
+    runs-on: ubuntu-latest
+    needs: [e2e-smoke-tests]
+    timeout-minutes: 10
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest pytest-asyncio httpx
+
+    - name: Run health tests
+      env:
+        RAILWAY_URL: ${{ inputs.railway_url || secrets.RAILWAY_URL }}
+        API_KEY: ${{ secrets.RAILWAY_API_KEY }}
+      run: |
+        pytest tests/e2e/test_railway_deployment.py::TestHealth \
+          -v \
+          --tb=short \
+          --junitxml=junit/e2e-health-results.xml
+
+    - name: Upload health test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: e2e-health-results
+        path: junit/e2e-health-results.xml
+
+  e2e-bag-tracking-tests:
+    name: E2E Bag Tracking Tests
+    runs-on: ubuntu-latest
+    needs: [e2e-health-tests]
+    timeout-minutes: 20
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest pytest-asyncio httpx
+
+    - name: Run bag tracking tests
+      env:
+        RAILWAY_URL: ${{ inputs.railway_url || secrets.RAILWAY_URL }}
+        API_KEY: ${{ secrets.RAILWAY_API_KEY }}
+      run: |
+        pytest tests/e2e/test_railway_deployment.py::TestBagTracking \
+          -v \
+          --tb=short \
+          --junitxml=junit/e2e-tracking-results.xml
+
+    - name: Upload tracking test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: e2e-tracking-results
+        path: junit/e2e-tracking-results.xml
+
+  e2e-workflow-tests:
+    name: E2E Workflow Tests
+    runs-on: ubuntu-latest
+    needs: [e2e-health-tests]
+    timeout-minutes: 20
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest pytest-asyncio httpx
+
+    - name: Run workflow tests
+      env:
+        RAILWAY_URL: ${{ inputs.railway_url || secrets.RAILWAY_URL }}
+        API_KEY: ${{ secrets.RAILWAY_API_KEY }}
+      run: |
+        pytest tests/e2e/test_railway_deployment.py::TestWorkflows \
+          -v \
+          --tb=short \
+          --junitxml=junit/e2e-workflow-results.xml
+
+    - name: Upload workflow test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: e2e-workflow-results
+        path: junit/e2e-workflow-results.xml
+
+  e2e-performance-tests:
+    name: E2E Performance Tests
+    runs-on: ubuntu-latest
+    needs: [e2e-bag-tracking-tests, e2e-workflow-tests]
+    timeout-minutes: 30
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest pytest-asyncio httpx
+
+    - name: Run performance tests
+      env:
+        RAILWAY_URL: ${{ inputs.railway_url || secrets.RAILWAY_URL }}
+        API_KEY: ${{ secrets.RAILWAY_API_KEY }}
+      run: |
+        pytest tests/e2e/test_railway_deployment.py::TestPerformance \
+          -v \
+          --tb=short \
+          -m "slow" \
+          --junitxml=junit/e2e-performance-results.xml
+
+    - name: Upload performance test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: e2e-performance-results
+        path: junit/e2e-performance-results.xml
+
+  e2e-error-handling-tests:
+    name: E2E Error Handling Tests
+    runs-on: ubuntu-latest
+    needs: [e2e-health-tests]
+    timeout-minutes: 15
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest pytest-asyncio httpx
+
+    - name: Run error handling tests
+      env:
+        RAILWAY_URL: ${{ inputs.railway_url || secrets.RAILWAY_URL }}
+        API_KEY: ${{ secrets.RAILWAY_API_KEY }}
+      run: |
+        pytest tests/e2e/test_railway_deployment.py::TestErrorHandling \
+          -v \
+          --tb=short \
+          --junitxml=junit/e2e-error-results.xml
+
+    - name: Upload error handling test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: e2e-error-results
+        path: junit/e2e-error-results.xml
+
+  e2e-data-integrity-tests:
+    name: E2E Data Integrity Tests
+    runs-on: ubuntu-latest
+    needs: [e2e-bag-tracking-tests]
+    timeout-minutes: 20
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest pytest-asyncio httpx
+
+    - name: Run data integrity tests
+      env:
+        RAILWAY_URL: ${{ inputs.railway_url || secrets.RAILWAY_URL }}
+        API_KEY: ${{ secrets.RAILWAY_API_KEY }}
+      run: |
+        pytest tests/e2e/test_railway_deployment.py::TestDataIntegrity \
+          -v \
+          --tb=short \
+          --junitxml=junit/e2e-integrity-results.xml
+
+    - name: Upload data integrity test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: e2e-integrity-results
+        path: junit/e2e-integrity-results.xml
+
+  # ===========================================================================
+  # TEST SUMMARY AND REPORTING
+  # ===========================================================================
+
+  e2e-summary:
+    name: E2E Test Summary & Reporting
+    runs-on: ubuntu-latest
+    needs: [
+      e2e-smoke-tests,
+      e2e-health-tests,
+      e2e-bag-tracking-tests,
+      e2e-workflow-tests,
+      e2e-performance-tests,
+      e2e-error-handling-tests,
+      e2e-data-integrity-tests
+    ]
+    if: always()
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download all E2E test results
+      uses: actions/download-artifact@v4
+      with:
+        path: e2e-results
+
+    - name: Publish E2E Test Results
+      uses: EnricoMi/publish-unit-test-result-action@v2
+      if: always()
+      with:
+        files: |
+          e2e-results/**/*.xml
+        check_name: E2E Test Results
+        comment_title: Nightly E2E Test Summary
+
+    - name: Generate test report
+      run: |
+        echo "# 🌙 Nightly E2E Test Report" > report.md
+        echo "" >> report.md
+        echo "**Date**: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> report.md
+        echo "**Railway URL**: ${{ inputs.railway_url || secrets.RAILWAY_URL }}" >> report.md
+        echo "" >> report.md
+        echo "## Test Suites" >> report.md
+        echo "" >> report.md
+        echo "| Test Suite | Status |" >> report.md
+        echo "|------------|--------|" >> report.md
+
+        for suite in e2e-smoke-results e2e-health-results e2e-tracking-results e2e-workflow-results e2e-performance-results e2e-error-results e2e-integrity-results; do
+          if [ -d "e2e-results/$suite" ]; then
+            echo "| $suite | ✅ Passed |" >> report.md
+          else
+            echo "| $suite | ❌ Failed |" >> report.md
+          fi
+        done
+
+        cat report.md
+
+    - name: Create GitHub Issue on Failure
+      if: failure()
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const issue = await github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.name,
+            title: `🚨 Nightly E2E Tests Failed - ${new Date().toISOString().split('T')[0]}`,
+            body: `## Nightly E2E Test Failure\n\n**Date**: ${new Date().toUTCString()}\n**Workflow Run**: https://github.com/${context.repo.owner}/${context.repo.name}/actions/runs/${context.runId}\n\nThe nightly E2E tests against the Railway deployment have failed. Please investigate immediately.\n\n### Actions Required\n- [ ] Review test failures\n- [ ] Check Railway deployment status\n- [ ] Verify external integrations\n- [ ] Run tests locally to reproduce\n- [ ] Fix issues and verify\n\n/cc @${context.actor}`,
+            labels: ['test-failure', 'e2e', 'critical']
+          });
+
+          console.log(`Created issue #${issue.data.number}`);
+
+    - name: Send Slack notification
+      if: always()
+      uses: 8398a7/action-slack@v3
+      with:
+        status: ${{ job.status }}
+        text: |
+          Nightly E2E Tests ${{ job.status }}
+          Railway URL: ${{ inputs.railway_url || secrets.RAILWAY_URL }}
+          View results: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+      continue-on-error: true
+
+    - name: Upload full test report
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: nightly-e2e-report
+        path: |
+          e2e-results/
+          report.md
+        retention-days: 30
+
+  # ===========================================================================
+  # DEPLOYMENT HEALTH CHECK
+  # ===========================================================================
+
+  deployment-health:
+    name: Railway Deployment Health Check
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Check Railway deployment status
+      run: |
+        echo "Checking Railway deployment..."
+        RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "${{ inputs.railway_url || secrets.RAILWAY_URL }}/health" || echo "000")
+
+        if [ "$RESPONSE" = "200" ]; then
+          echo "✅ Deployment is healthy (HTTP $RESPONSE)"
+        else
+          echo "❌ Deployment is unhealthy (HTTP $RESPONSE)"
+          exit 1
+        fi
+
+    - name: Check Railway metrics endpoint
+      run: |
+        echo "Checking metrics endpoint..."
+        RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "${{ inputs.railway_url || secrets.RAILWAY_URL }}/metrics" || echo "000")
+
+        if [ "$RESPONSE" = "200" ]; then
+          echo "✅ Metrics endpoint is accessible"
+        else
+          echo "⚠️  Metrics endpoint returned HTTP $RESPONSE"
+        fi
+      continue-on-error: true
+
+    - name: Test API response time
+      run: |
+        echo "Testing API response time..."
+        START=$(date +%s%N)
+        curl -s "${{ inputs.railway_url || secrets.RAILWAY_URL }}/health" > /dev/null
+        END=$(date +%s%N)
+
+        DURATION=$((($END - $START) / 1000000))
+        echo "Response time: ${DURATION}ms"
+
+        if [ $DURATION -lt 2000 ]; then
+          echo "✅ Response time is acceptable (<2s)"
+        else
+          echo "⚠️  Response time is slow (>2s)"
+        fi
