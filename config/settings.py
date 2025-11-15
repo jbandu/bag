@@ -37,18 +37,22 @@ class Settings(BaseSettings):
     worldtracer_api_url: str = "https://worldtracer-api.example.com"
     worldtracer_api_key: str = "placeholder-key"
     worldtracer_airline_code: str = "CM"
+    worldtracer_use_mock: bool = True  # Set to False in production
 
     # SITA Messaging (Optional)
     sita_type_b_endpoint: str = "https://sita-gateway.example.com"
     sita_airline_code: str = "CMXH"
-    
+
     # Communication Services
     twilio_account_sid: Optional[str] = None
     twilio_auth_token: Optional[str] = None
     twilio_from_number: Optional[str] = None
-    
+    twilio_use_mock: bool = True  # Set to False in production
+
     sendgrid_api_key: Optional[str] = None
     sendgrid_from_email: Optional[str] = None
+    sendgrid_from_name: str = "Copa Airlines Baggage Services"
+    sendgrid_use_mock: bool = True  # Set to False in production
     
     firebase_credentials_path: Optional[str] = None
     

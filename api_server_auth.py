@@ -48,7 +48,10 @@ from app.database import (
     RedisManager,
     DatabaseHealthChecker
 )
-from app.api import health_router, init_health_checker
+from app.api import health_router, init_health_checker, init_external_services
+
+# External services imports
+from app.external import ExternalServicesManager
 
 # Lazy imports for orchestrator and redis (only load when needed)
 orchestrator = None
@@ -59,6 +62,9 @@ postgres_manager = None
 neo4j_manager = None
 redis_manager = None
 health_checker = None
+
+# Global external services manager
+external_services_manager = None
 
 def get_orchestrator():
     """Lazy load orchestrator only when needed"""
@@ -609,7 +615,7 @@ app.include_router(health_router)
 @app.on_event("startup")
 async def startup_event():
     """Initialize on startup"""
-    global postgres_manager, neo4j_manager, redis_manager, health_checker
+    global postgres_manager, neo4j_manager, redis_manager, health_checker, external_services_manager
 
     logger.info("=" * 60)
     logger.info("BAGGAGE OPERATIONS API STARTING (WITH AUTHENTICATION)")
@@ -687,6 +693,54 @@ async def startup_event():
     else:
         logger.warning("⚠️ Authentication disabled - no database URL configured")
 
+    # Initialize external services
+    logger.info("Initializing external services...")
+    try:
+        external_services_manager = ExternalServicesManager(
+            # WorldTracer
+            worldtracer_api_url=settings.worldtracer_api_url,
+            worldtracer_api_key=settings.worldtracer_api_key,
+            worldtracer_airline_code=settings.worldtracer_airline_code,
+            worldtracer_use_mock=settings.worldtracer_use_mock,
+
+            # Twilio
+            twilio_account_sid=settings.twilio_account_sid,
+            twilio_auth_token=settings.twilio_auth_token,
+            twilio_from_number=settings.twilio_from_number,
+            twilio_use_mock=settings.twilio_use_mock,
+
+            # SendGrid
+            sendgrid_api_key=settings.sendgrid_api_key,
+            sendgrid_from_email=settings.sendgrid_from_email,
+            sendgrid_from_name=settings.sendgrid_from_name,
+            sendgrid_use_mock=settings.sendgrid_use_mock
+        )
+
+        await external_services_manager.connect_all()
+        init_external_services(external_services_manager)
+
+        # Log which services are in mock mode
+        if settings.worldtracer_use_mock:
+            logger.info("  🎭 WorldTracer: MOCK mode")
+        else:
+            logger.info("  ✅ WorldTracer: PRODUCTION mode")
+
+        if settings.twilio_use_mock:
+            logger.info("  🎭 Twilio: MOCK mode")
+        else:
+            logger.info("  ✅ Twilio: PRODUCTION mode")
+
+        if settings.sendgrid_use_mock:
+            logger.info("  🎭 SendGrid: MOCK mode")
+        else:
+            logger.info("  ✅ SendGrid: PRODUCTION mode")
+
+        logger.info("✅ External services initialized")
+
+    except Exception as e:
+        logger.error(f"❌ External services initialization failed: {e}")
+        logger.warning("⚠️ Continuing without external services")
+
     logger.info("=" * 60)
 
 
@@ -718,6 +772,14 @@ async def shutdown_event():
             logger.info("✅ Redis disconnected")
         except Exception as e:
             logger.error(f"Error disconnecting Redis: {e}")
+
+    # Disconnect external services
+    if external_services_manager:
+        try:
+            await external_services_manager.disconnect_all()
+            logger.info("✅ External services disconnected")
+        except Exception as e:
+            logger.error(f"Error disconnecting external services: {e}")
 
     logger.info("Shutdown complete")
     logger.info("=" * 60)

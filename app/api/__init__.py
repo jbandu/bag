@@ -7,9 +7,14 @@ Contains FastAPI routers for different API sections:
 - (Future) Analytics endpoints
 """
 
-from app.api.health import router as health_router, init_health_checker
+from app.api.health import (
+    router as health_router,
+    init_health_checker,
+    init_external_services
+)
 
 __all__ = [
     "health_router",
-    "init_health_checker"
+    "init_health_checker",
+    "init_external_services"
 ]

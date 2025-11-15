@@ -14,14 +14,16 @@ from typing import Dict, Any
 from loguru import logger
 
 from app.database.health import DatabaseHealthChecker
+from app.external.manager import ExternalServicesManager
 
 
 # Router for health check endpoints
 router = APIRouter(prefix="/health", tags=["Health"])
 
 
-# Global health checker instance (will be initialized by main app)
+# Global health checker instances (will be initialized by main app)
 _health_checker: DatabaseHealthChecker = None
+_external_services: ExternalServicesManager = None
 
 
 def init_health_checker(health_checker: DatabaseHealthChecker):
@@ -35,7 +37,21 @@ def init_health_checker(health_checker: DatabaseHealthChecker):
     """
     global _health_checker
     _health_checker = health_checker
-    logger.info("Health checker initialized")
+    logger.info("Database health checker initialized")
+
+
+def init_external_services(external_services: ExternalServicesManager):
+    """
+    Initialize external services manager
+
+    Called by main application during startup
+
+    Args:
+        external_services: ExternalServicesManager instance
+    """
+    global _external_services
+    _external_services = external_services
+    logger.info("External services manager initialized")
 
 
 @router.get(
@@ -268,22 +284,49 @@ async def external_services_health(response: Response):
             "worldtracer": {...},
             "twilio": {...},
             "sendgrid": {...}
+        },
+        "summary": {
+            "total_services": 3,
+            "healthy_services": 3,
+            "mock_services": 0
         }
     }
     """
-    # TODO: Implement when external service clients are ready
-    # For now, return a placeholder response
-    response.status_code = status.HTTP_501_NOT_IMPLEMENTED
-    return {
-        "status": "not_implemented",
-        "healthy": False,
-        "message": "External service health checks not yet implemented",
-        "services": {
-            "worldtracer": {"status": "unknown", "healthy": None},
-            "twilio": {"status": "unknown", "healthy": None},
-            "sendgrid": {"status": "unknown", "healthy": None}
+    if not _external_services:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        return {
+            "status": "unhealthy",
+            "healthy": False,
+            "error": "External services not initialized",
+            "services": {
+                "worldtracer": {"status": "unknown", "healthy": False},
+                "twilio": {"status": "unknown", "healthy": False},
+                "sendgrid": {"status": "unknown", "healthy": False}
+            }
         }
-    }
+
+    try:
+        health_status = await _external_services.health_check_all()
+
+        # Set HTTP status code based on health
+        if health_status["status"] == "unhealthy":
+            response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        elif health_status["status"] == "degraded":
+            response.status_code = status.HTTP_200_OK  # Still operational
+        else:
+            response.status_code = status.HTTP_200_OK
+
+        return health_status
+
+    except Exception as e:
+        logger.error(f"External services health check failed: {e}")
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        return {
+            "status": "unhealthy",
+            "healthy": False,
+            "error": str(e)
+        }
+
 
 
 @router.get(
