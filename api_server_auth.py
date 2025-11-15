@@ -41,9 +41,24 @@ from app.auth import (
     CurrentAirline
 )
 
+# Database and health check imports
+from app.database import (
+    PostgresManager,
+    Neo4jManager,
+    RedisManager,
+    DatabaseHealthChecker
+)
+from app.api import health_router, init_health_checker
+
 # Lazy imports for orchestrator and redis (only load when needed)
 orchestrator = None
 redis_cache = None
+
+# Global database manager instances
+postgres_manager = None
+neo4j_manager = None
+redis_manager = None
+health_checker = None
 
 def get_orchestrator():
     """Lazy load orchestrator only when needed"""
@@ -150,7 +165,15 @@ async def root():
             "docs": "/docs"
         },
         "endpoints": {
-            "health": "/health",
+            "health": {
+                "overall": "GET /health",
+                "database": "GET /health/database",
+                "graph": "GET /health/graph",
+                "cache": "GET /health/cache",
+                "external": "GET /health/external",
+                "ready": "GET /health/ready (Kubernetes readiness)",
+                "live": "GET /health/live (Kubernetes liveness)"
+            },
             "metrics": "/metrics",
             "api_docs": "/docs",
             "redoc": "/redoc",
@@ -170,19 +193,6 @@ async def root():
             "Passenger Communication"
         ],
         "powered_by": "Claude Sonnet 4 + LangGraph"
-    }
-
-
-# Health check (public)
-@app.get("/health")
-async def health_check():
-    """Health check endpoint"""
-    return {
-        "status": "healthy",
-        "timestamp": datetime.utcnow().isoformat(),
-        "service": "baggage-operations-api",
-        "version": "1.0.0",
-        "authentication": "enabled"
     }
 
 
@@ -590,42 +600,127 @@ async def get_dashboard_stats(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# Include authentication router
+# Include routers
 app.include_router(auth_router)
+app.include_router(health_router)
 
 
 # Startup/shutdown events
 @app.on_event("startup")
 async def startup_event():
     """Initialize on startup"""
+    global postgres_manager, neo4j_manager, redis_manager, health_checker
+
     logger.info("=" * 60)
     logger.info("BAGGAGE OPERATIONS API STARTING (WITH AUTHENTICATION)")
     logger.info("=" * 60)
     logger.info(f"Environment: {settings.environment}")
     logger.info(f"API Port: {settings.api_port}")
 
-    # Initialize authentication database
-    auth_db = AuthDatabase(settings.neon_database_url)
-    await auth_db.connect()
+    # Initialize production database managers
+    logger.info("Initializing database connections...")
 
-    # Initialize Redis
-    redis_client = get_redis()
+    # PostgreSQL (Neon)
+    if settings.neon_database_url:
+        try:
+            postgres_manager = PostgresManager(
+                database_url=settings.neon_database_url,
+                min_connections=2,
+                max_connections=20
+            )
+            await postgres_manager.connect()
+            logger.info("✅ PostgreSQL connected")
+        except Exception as e:
+            logger.error(f"❌ PostgreSQL connection failed: {e}")
+            # Continue without PostgreSQL - allow graceful degradation
 
-    # Set auth dependencies
-    set_auth_dependencies(
-        auth_db=auth_db,
-        redis_client=redis_client,
-        jwt_secret=settings.jwt_secret
-    )
+    # Neo4j (Aura)
+    try:
+        neo4j_manager = Neo4jManager(
+            uri=settings.neo4j_uri,
+            user=settings.neo4j_user,
+            password=settings.neo4j_password
+        )
+        await neo4j_manager.connect()
+        logger.info("✅ Neo4j connected")
+    except Exception as e:
+        logger.error(f"❌ Neo4j connection failed: {e}")
+        # Continue without Neo4j - allow graceful degradation
 
-    logger.info("✅ Authentication system initialized")
+    # Redis (Upstash/Railway)
+    try:
+        redis_manager = RedisManager(redis_url=settings.redis_url)
+        await redis_manager.connect()
+        logger.info("✅ Redis connected")
+    except Exception as e:
+        logger.error(f"❌ Redis connection failed: {e}")
+        # Continue without Redis - allow graceful degradation
+
+    # Initialize health checker
+    if postgres_manager and neo4j_manager and redis_manager:
+        health_checker = DatabaseHealthChecker(
+            postgres=postgres_manager,
+            neo4j=neo4j_manager,
+            redis=redis_manager
+        )
+        init_health_checker(health_checker)
+        logger.info("✅ Health check system initialized")
+    else:
+        logger.warning("⚠️ Health check system not fully initialized - some databases unavailable")
+
+    # Initialize authentication database (uses same PostgreSQL connection)
+    if settings.neon_database_url:
+        auth_db = AuthDatabase(settings.neon_database_url)
+        await auth_db.connect()
+
+        # Initialize Redis (legacy - uses old redis_cache)
+        redis_client = get_redis()
+
+        # Set auth dependencies
+        set_auth_dependencies(
+            auth_db=auth_db,
+            redis_client=redis_client,
+            jwt_secret=settings.jwt_secret
+        )
+
+        logger.info("✅ Authentication system initialized")
+    else:
+        logger.warning("⚠️ Authentication disabled - no database URL configured")
+
     logger.info("=" * 60)
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Cleanup on shutdown"""
-    logger.info("Baggage Operations API shutting down")
+    logger.info("=" * 60)
+    logger.info("BAGGAGE OPERATIONS API SHUTTING DOWN")
+    logger.info("=" * 60)
+
+    # Close database connections
+    if postgres_manager:
+        try:
+            await postgres_manager.disconnect()
+            logger.info("✅ PostgreSQL disconnected")
+        except Exception as e:
+            logger.error(f"Error disconnecting PostgreSQL: {e}")
+
+    if neo4j_manager:
+        try:
+            await neo4j_manager.disconnect()
+            logger.info("✅ Neo4j disconnected")
+        except Exception as e:
+            logger.error(f"Error disconnecting Neo4j: {e}")
+
+    if redis_manager:
+        try:
+            await redis_manager.disconnect()
+            logger.info("✅ Redis disconnected")
+        except Exception as e:
+            logger.error(f"Error disconnecting Redis: {e}")
+
+    logger.info("Shutdown complete")
+    logger.info("=" * 60)
 
 
 if __name__ == "__main__":
