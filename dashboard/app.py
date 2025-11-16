@@ -17,6 +17,9 @@ from loguru import logger
 
 from utils.database import redis_cache, supabase_db
 from orchestrator.baggage_orchestrator import orchestrator
+from config.settings import settings
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 
 # Page config
@@ -107,58 +110,127 @@ tab1, tab2, tab3, tab4 = st.tabs([
 with tab1:
     st.header("Real-Time Operations")
     
-    # KPIs
+    # KPIs - Query real database metrics
     col1, col2, col3, col4 = st.columns(4)
-    
+
+    # Get real metrics from database
+    try:
+        if settings.neon_database_url:
+            conn = psycopg2.connect(settings.neon_database_url)
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+            # Total bags
+            cursor.execute("SELECT COUNT(*) as count FROM baggage")
+            total_bags = cursor.fetchone()['count']
+
+            # Total scans
+            cursor.execute("SELECT COUNT(*) as count FROM scan_events")
+            total_scans = cursor.fetchone()['count']
+
+            # High risk bags
+            cursor.execute("SELECT COUNT(*) as count FROM baggage WHERE risk_score >= 0.7")
+            high_risk = cursor.fetchone()['count']
+
+            # Exception cases
+            cursor.execute("SELECT COUNT(*) as count FROM exception_cases WHERE status != 'resolved'")
+            active_exceptions = cursor.fetchone()['count']
+
+            cursor.close()
+            conn.close()
+        else:
+            total_bags = 0
+            total_scans = 0
+            high_risk = 0
+            active_exceptions = 0
+    except Exception as e:
+        logger.error(f"Error fetching metrics: {e}")
+        total_bags = 0
+        total_scans = 0
+        high_risk = 0
+        active_exceptions = 0
+
     with col1:
-        bags_processed = redis_cache.get_metric('bags_processed')
         st.metric(
-            label="Bags Processed Today",
-            value=f"{bags_processed:,}",
-            delta="+12 from last hour"
+            label="Total Bags",
+            value=f"{total_bags:,}",
+            delta=None
         )
-    
+
     with col2:
-        scans_processed = redis_cache.get_metric('scans_processed')
         st.metric(
-            label="Scans Processed",
-            value=f"{scans_processed:,}",
-            delta="+45 from last hour"
+            label="Total Scans",
+            value=f"{total_scans:,}",
+            delta=None
         )
-    
+
     with col3:
-        exceptions = redis_cache.get_metric('exceptions_handled')
         st.metric(
-            label="Exceptions Handled",
-            value=f"{exceptions}",
-            delta="-3 from yesterday",
+            label="Active Exceptions",
+            value=f"{active_exceptions}",
+            delta=None,
             delta_color="inverse"
         )
-    
+
     with col4:
-        high_risk_bags = redis_cache.get_metric('high_risk_bags_detected')
         st.metric(
             label="High Risk Bags",
-            value=f"{high_risk_bags}",
-            delta="+2 from last hour",
+            value=f"{high_risk}",
+            delta=None,
             delta_color="inverse"
         )
     
     st.divider()
-    
+
     # Recent scan events
     st.subheader("Recent Scan Events")
-    
-    # Mock data for demonstration
-    recent_scans = pd.DataFrame({
-        'Time': pd.date_range(end=datetime.now(), periods=10, freq='5min')[::-1],
-        'Bag Tag': [f'CM{1000+i}' for i in range(10)],
-        'Location': ['PTY-T1', 'MIA-T3', 'PTY-BHS', 'EWR-T1', 'PTY-T1', 
-                     'JFK-T8', 'PTY-BHS', 'MIA-T3', 'PTY-T1', 'ORD-T1'],
-        'Status': ['In Transit', 'Arrived', 'Loading', 'In Transit', 'Checked In',
-                   'In Transit', 'Sortation', 'Arrived', 'Loading', 'Delayed'],
-        'Risk Score': [0.2, 0.1, 0.3, 0.5, 0.1, 0.7, 0.4, 0.2, 0.3, 0.85]
-    })
+
+    # Query real data from Neon PostgreSQL
+    try:
+        if settings.neon_database_url:
+            conn = psycopg2.connect(settings.neon_database_url)
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+            # Get recent scan events with bag info
+            cursor.execute("""
+                SELECT
+                    se.timestamp as time,
+                    se.bag_tag as bag_tag,
+                    se.location,
+                    se.scan_type,
+                    b.status,
+                    COALESCE(b.risk_score, 0.0) as risk_score
+                FROM scan_events se
+                LEFT JOIN baggage b ON se.bag_tag = b.bag_tag
+                ORDER BY se.timestamp DESC
+                LIMIT 20
+            """)
+
+            rows = cursor.fetchall()
+            cursor.close()
+            conn.close()
+
+            if rows:
+                recent_scans = pd.DataFrame([
+                    {
+                        'Time': row['time'],
+                        'Bag Tag': row['bag_tag'],
+                        'Location': row['location'],
+                        'Scan Type': row['scan_type'],
+                        'Status': row['status'] or 'Unknown',
+                        'Risk Score': float(row['risk_score'])
+                    }
+                    for row in rows
+                ])
+            else:
+                st.info("No scan events yet. Process some test bags to see them here!")
+                recent_scans = None
+        else:
+            st.warning("Database not configured. Set NEON_DATABASE_URL environment variable.")
+            recent_scans = None
+    except Exception as e:
+        st.error(f"Error loading scan events: {str(e)}")
+        logger.error(f"Dashboard error: {e}")
+        recent_scans = None
     
     # Color code by risk
     def highlight_risk(row):
@@ -171,11 +243,14 @@ with tab1:
         else:
             return [''] * len(row)
     
-    st.dataframe(
-        recent_scans.style.apply(highlight_risk, axis=1),
-        use_container_width=True,
-        hide_index=True
-    )
+    if recent_scans is not None and len(recent_scans) > 0:
+        st.dataframe(
+            recent_scans.style.apply(highlight_risk, axis=1),
+            use_container_width=True,
+            hide_index=True
+        )
+    else:
+        st.info("📭 No scan events in database. Use the sidebar to process a test scan event!")
 
 
 # Tab 2: Risk Assessment

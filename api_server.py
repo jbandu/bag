@@ -444,7 +444,314 @@ async def get_dashboard_stats():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ========================================
+# Event Ingestion API Endpoints
+# ========================================
+
+@app.post("/api/v1/events/scan")
+async def ingest_scan_event(event: Dict[str, Any]):
+    """
+    Ingest bag scan event from RFID scanner or barcode reader
+
+    Request Body:
+        BagScanEvent schema
+    """
+    try:
+        from services.event_ingestion_service import get_event_ingestion_service
+
+        ingestion_service = get_event_ingestion_service()
+        event_id = ingestion_service.publish_event(event, event_type="scan")
+
+        if event_id:
+            return {
+                "status": "success",
+                "event_id": event_id,
+                "message": "Scan event ingested",
+                "timestamp": datetime.utcnow().isoformat()
+            }
+        else:
+            return {
+                "status": "duplicate",
+                "message": "Duplicate event detected and filtered",
+                "timestamp": datetime.utcnow().isoformat()
+            }
+
+    except Exception as e:
+        logger.error(f"Error ingesting scan event: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/events/batch")
+async def ingest_batch_events(batch: Dict[str, Any]):
+    """
+    Bulk ingest multiple events
+
+    Request Body:
+        {
+            "events": [...],
+            "source_system": "BHS_SYSTEM_1",
+            "event_type": "scan"
+        }
+    """
+    try:
+        from services.event_ingestion_service import get_event_ingestion_service
+
+        ingestion_service = get_event_ingestion_service()
+
+        events = batch.get('events', [])
+        event_type = batch.get('event_type', 'scan')
+        source_system = batch.get('source_system', 'unknown')
+
+        event_ids = ingestion_service.publish_batch(events, event_type=event_type)
+
+        return {
+            "status": "success",
+            "total_events": len(events),
+            "ingested_events": len(event_ids),
+            "duplicates_filtered": len(events) - len(event_ids),
+            "source_system": source_system,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Error ingesting batch events: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/events/sensor")
+async def ingest_sensor_event(event: Dict[str, Any]):
+    """
+    Ingest IoT sensor data
+
+    Request Body:
+        Event data from IoT sensors (temperature, location, etc.)
+    """
+    try:
+        from services.event_ingestion_service import get_event_ingestion_service
+
+        ingestion_service = get_event_ingestion_service()
+
+        # Determine event type from sensor data
+        sensor_type = event.get('sensor_type', 'unknown')
+
+        if 'anomaly' in sensor_type.lower():
+            event_type = 'anomaly'
+        else:
+            event_type = 'scan'
+
+        event_id = ingestion_service.publish_event(event, event_type=event_type)
+
+        return {
+            "status": "success",
+            "event_id": event_id,
+            "sensor_type": sensor_type,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Error ingesting sensor event: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/events/stream/info")
+async def get_stream_info():
+    """
+    Get event stream information and metrics
+    """
+    try:
+        from services.event_ingestion_service import get_event_ingestion_service
+
+        ingestion_service = get_event_ingestion_service()
+        metrics = ingestion_service.get_metrics()
+
+        return {
+            "status": "success",
+            "metrics": metrics,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Error fetching stream info: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/events/replay")
+async def replay_events(
+    start_id: str = '0',
+    end_id: str = '+',
+    count: int = 100
+):
+    """
+    Replay events from stream history
+
+    Query Parameters:
+        start_id: Start event ID (default: '0')
+        end_id: End event ID (default: '+')
+        count: Number of events to replay (default: 100)
+    """
+    try:
+        from services.event_ingestion_service import get_event_ingestion_service
+
+        ingestion_service = get_event_ingestion_service()
+        events = ingestion_service.replay_events(start_id, end_id, count)
+
+        return {
+            "status": "success",
+            "total_events": len(events),
+            "events": events,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Error replaying events: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ========================================
+# Neo4j Graph Query API Endpoints
+# ========================================
+
+@app.get("/api/v1/graph/bags/{bag_id}/journey")
+async def get_bag_journey(bag_id: str):
+    """
+    Get full journey path reconstruction for a bag
+
+    Returns complete scan history with timestamps and locations.
+    """
+    try:
+        from services.graph_query_service import get_graph_query_service
+
+        graph_service = get_graph_query_service()
+        journey = graph_service.get_bag_journey(bag_id)
+
+        return journey
+
+    except Exception as e:
+        logger.error(f"Error fetching bag journey: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/graph/bags/{bag_id}/current-location")
+async def get_bag_current_location(bag_id: str):
+    """
+    Get real-time current location of a bag
+
+    Returns latest scan event and current position.
+    """
+    try:
+        from services.graph_query_service import get_graph_query_service
+
+        graph_service = get_graph_query_service()
+        location = graph_service.get_current_location(bag_id)
+
+        return location
+
+    except Exception as e:
+        logger.error(f"Error fetching bag location: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/graph/flights/{flight_id}/bags")
+async def get_flight_bags(flight_id: str):
+    """
+    Get all bags for a specific flight
+
+    Returns manifest of all bags on the flight.
+    """
+    try:
+        from services.graph_query_service import get_graph_query_service
+
+        graph_service = get_graph_query_service()
+        bags = graph_service.get_flight_bags(flight_id)
+
+        return bags
+
+    except Exception as e:
+        logger.error(f"Error fetching flight bags: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/graph/bags/connection-risk")
+async def analyze_connection_risk(
+    bag_id: str,
+    connecting_flight: str,
+    connection_time_minutes: int
+):
+    """
+    Analyze connection feasibility for a bag
+
+    Returns risk assessment and recommendation for making the connection.
+    """
+    try:
+        from services.graph_query_service import get_graph_query_service
+
+        graph_service = get_graph_query_service()
+        analysis = graph_service.analyze_connection_risk(
+            bag_id=bag_id,
+            connecting_flight=connecting_flight,
+            connection_time_minutes=connection_time_minutes
+        )
+
+        return analysis
+
+    except Exception as e:
+        logger.error(f"Error analyzing connection risk: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/graph/analytics/bottlenecks")
+async def identify_bottlenecks(
+    time_window_hours: int = 1,
+    min_bags: int = 5
+):
+    """
+    Identify system bottlenecks
+
+    Analyzes scan patterns to find locations with high bag accumulation.
+    """
+    try:
+        from services.graph_query_service import get_graph_query_service
+
+        graph_service = get_graph_query_service()
+        bottlenecks = graph_service.identify_bottlenecks(
+            time_window_hours=time_window_hours,
+            min_bags=min_bags
+        )
+
+        return bottlenecks
+
+    except Exception as e:
+        logger.error(f"Error identifying bottlenecks: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/graph/bags/{bag_id}/network")
+async def get_bag_network(
+    bag_id: str,
+    depth: int = 2
+):
+    """
+    Get network of related entities for a bag
+
+    Returns related bags, passengers, and flights.
+    """
+    try:
+        from services.graph_query_service import get_graph_query_service
+
+        graph_service = get_graph_query_service()
+        network = graph_service.get_bag_network(bag_id=bag_id, depth=depth)
+
+        return network
+
+    except Exception as e:
+        logger.error(f"Error fetching bag network: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ========================================
 # Startup/shutdown events
+# ========================================
+
 @app.on_event("startup")
 async def startup_event():
     """Initialize on startup"""
